@@ -5,6 +5,7 @@ import {
   KnowledgeDocumentRequestSchema 
 } from './schemas.js';
 import { dbInstance } from './db.js';
+import { aiService } from './services/ai.js';
 
 const startTime = Date.now();
 
@@ -175,23 +176,22 @@ export function buildApp() {
       });
     }
 
-    // Invariante 5: Consulta Informativa / RAG
-    const ragSources = lowerMsg.includes('estudio') || lowerMsg.includes('ecografia') 
-      ? ['normativas_estudios_ecografia.md']
-      : ['atencion_y_modalidades.md'];
+    // Procesamiento con IA Cascada (Ollama Local -> Gemini -> Deterministic Fallback)
+    const result = await aiService.processMessage(
+      parseResult.data.tenantId,
+      message,
+      clinicContext,
+      parseResult.data.conversationHistory
+    );
 
     return reply.status(200).send({
-      intent: 'INFORMACION_HORARIOS',
-      confidence: 0.88,
-      actionRequired: 'REPLY_ONLY',
-      entities: {
-        doctorName: null,
-        preferredShift: 'indistinto',
-        urgency: 'baja'
-      },
-      suggestedReply: `Hola! Gracias por comunicarte con ${clinicContext?.clinicName || 'nuestro consultorio'}. Nuestro horario de secretaría es ${clinicContext?.secretaryHours || 'habitual'}. ¿En qué podemos ayudarte?`,
-      ragSources,
-      latencyMs: 18
+      intent: result.intent,
+      confidence: result.confidence,
+      actionRequired: result.actionRequired,
+      entities: result.entities,
+      suggestedReply: result.suggestedReply,
+      ragSources: result.ragSources,
+      latencyMs: result.latencyMs
     });
   });
 

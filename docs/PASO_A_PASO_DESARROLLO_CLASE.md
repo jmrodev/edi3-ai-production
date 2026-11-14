@@ -302,3 +302,18 @@ Para cumplir con la directiva obligatoria de desarrollo estructurado de software
    - `POST /api/v1/knowledge/documents` montado en Fastify, indexando chunks en SQLite y respondiendo `201 Created` con `chunksIndexed`.
 4. **Verificación Adversarial Completa:**
    - 26/26 pruebas de intrusión en `tests/003_rag_breaker.hurl` superadas al 100%. Total suite: **52/52 requests exitosas** sin ninguna regresión.
+
+---
+
+## Fase 4.3: Orquestación de IA en Cascada (Ollama Local -> Gemini Flash -> Deterministic Fallback)
+
+1. **Gestión Consciente de Recursos de Hardware:**
+   - Host: AMD Ryzen 5 PRO (6 núcleos, 12 hilos), ~7.8 GiB RAM disponible.
+   - Ollama configurado con `num_thread: 4` (preserva 2 núcleos de CPU para el sistema) y `num_ctx: 2048` (máximo ~2 GB de RAM con `qwen2.5:3b`).
+   - Timeout de inferencia local de 6 segundos para evitar saturación de la máquina.
+2. **Arquitectura Cascada en `src/services/ai.ts`:**
+   - **Nivel 1:** Ollama local (`qwen2.5:3b` en `127.0.0.1:11434`) con salida forzada en JSON y cero costo de tokens.
+   - **Nivel 2:** Google Generative AI SDK (`gemini-2.5-flash`) si Ollama no está activo o supera el timeout.
+   - **Nivel 3:** Reglas deterministas de seguridad para contingencia sin conexión y pruebas de integración.
+3. **Validación de la Suite:**
+   - Los 52 tests Hurl existentes pasan al 100% integrados con el nuevo pipeline de IA.
