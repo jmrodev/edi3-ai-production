@@ -317,3 +317,15 @@ Para cumplir con la directiva obligatoria de desarrollo estructurado de software
    - **Nivel 3:** Reglas deterministas de seguridad para contingencia sin conexión y pruebas de integración.
 3. **Validación de la Suite:**
    - Los 52 tests Hurl existentes pasan al 100% integrados con el nuevo pipeline de IA.
+
+---
+
+## Fase 4.4: Memoria Conversacional e Inyección de conversationHistory (Milestone M6)
+
+1. **Defensa de Datos Pasivos (Passive Context Invariant):**
+   - El historial proviene de la base de datos de `secretary-app` (cliente) y se inyecta en tags XML delimitados `<historial_conversacion>`.
+   - Sanitización para neutralizar jailbreaks y directivas inyectadas dentro de roles falsos `assistant` o `<<SYS>>`.
+2. **Resolución de Correferencias:**
+   - Si el paciente responde pronombres relativos como *'prefiero con ella'* o *'confirmo ese'*, el modelo (o el fallback) analiza el hilo previo del historial y extrae la profesional sugerida (`Dra. Gomez` / `Dr. Perez`).
+3. **Verificación Adversarial Completa:**
+   - 12/12 nuevos escenarios en `tests/004_conversation_history_breaker.hurl` superados al 100%. Total suite de regresión y seguridad: **64/64 requests exitosas**.

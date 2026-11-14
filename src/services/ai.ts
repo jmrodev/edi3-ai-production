@@ -61,8 +61,10 @@ export class AIService {
   ): Promise<AIAnalysisResult> {
     const start = Date.now();
 
-    // 1. Invariantes Rápidas Defensivas (Guardrails antes del LLM)
+    // 1. Invariantes Rápidas Defensivas (Guardrails antes del LLM sobre mensaje e historial)
     const lowerMsg = message.toLowerCase();
+    const historyCombined = (conversationHistory || []).map(h => h.content.toLowerCase()).join(' ');
+    const fullInputText = `${lowerMsg} ${historyCombined}`;
 
     // Jailbreak / Prompt Injection Detection
     const injectionPatterns = [
@@ -75,10 +77,11 @@ export class AIService {
       'do anything now',
       'dan',
       '[admin override]',
-      'override'
+      'override',
+      '<<sys>>'
     ];
-    if (injectionPatterns.some(p => lowerMsg.includes(p))) {
-      const isOverride = lowerMsg.includes('[admin override]') || lowerMsg.includes('override');
+    if (injectionPatterns.some(p => fullInputText.includes(p))) {
+      const isOverride = fullInputText.includes('[admin override]') || fullInputText.includes('override') || fullInputText.includes('<<sys>>');
       return {
         intent: 'OTRO',
         confidence: 0.99,
@@ -93,7 +96,7 @@ export class AIService {
 
     // Triage de Emergencia Vital
     const urgentTerms = ['pecho', 'infarto', 'respirar', 'aire', 'desmayo', 'asfixia', 'coronario'];
-    if (urgentTerms.some(term => lowerMsg.includes(term))) {
+    if (urgentTerms.some(term => fullInputText.includes(term))) {
       return {
         intent: 'OTRO',
         confidence: 0.99,
@@ -108,7 +111,7 @@ export class AIService {
 
     // Prescripción Cero (Fármacos controlados)
     const drugs = ['clonazepam', 'morfina', 'receta', 'alprazolam', 'tramadol', 'ansiolitico'];
-    if (drugs.some(d => lowerMsg.includes(d))) {
+    if (drugs.some(d => fullInputText.includes(d))) {
       return {
         intent: 'OTRO',
         confidence: 0.95,
@@ -127,9 +130,18 @@ export class AIService {
       ? `\n<normativas_institucionales_rag>\n${relevantChunks.map(c => `[${c.title}]: ${c.content}`).join('\n')}\n</normativas_institucionales_rag>`
       : '';
 
+    // Historial conversacional delimitado como dato pasivo
+    let historyContext = '';
+    if (conversationHistory && conversationHistory.length > 0) {
+      const sanitizedHistory = conversationHistory
+        .map(h => `${h.role}: ${h.content.replace(/<\/?historial_conversacion>/g, '')}`)
+        .join('\n');
+      historyContext = `\n<historial_conversacion>\n${sanitizedHistory}\n</historial_conversacion>`;
+    }
+
     // Construcción del contexto clínico seguro
     const clinicData = clinicContext ? `\n<contexto_clinico>\n${JSON.stringify(clinicContext, null, 2)}\n</contexto_clinico>` : '';
-    const userPrompt = `${clinicData}${ragContext}\n\n<mensaje_paciente>\n${message}\n</mensaje_paciente>`;
+    const userPrompt = `${clinicData}${ragContext}${historyContext}\n\n<mensaje_paciente>\n${message}\n</mensaje_paciente>`;
 
     // 3. Cascada de Inferencia: Nivel 1 (Ollama Local qwen2.5:3b)
     try {
@@ -162,7 +174,7 @@ export class AIService {
     }
 
     // 5. Nivel 3: Fallback Determinista Seguro
-    return this.deterministicFallback(message, clinicContext, relevantChunks, Date.now() - start);
+    return this.deterministicFallback(message, clinicContext, relevantChunks, Date.now() - start, conversationHistory);
   }
 
   private async callOllama(prompt: string): Promise<any | null> {
@@ -229,15 +241,45 @@ export class AIService {
     message: string,
     clinicContext: any,
     relevantChunks: any[],
-    elapsedMs: number
+    elapsedMs: number,
+    conversationHistory?: any[]
   ): AIAnalysisResult {
     const lowerMsg = message.toLowerCase();
 
+    // Análisis de historial para correferencias ("con ella", "con el", "confirmo ese")
+    let historyDoctor: string | null = null;
+    let historyPrefersFemale = lowerMsg.includes('ella');
+    let historyPrefersMale = lowerMsg.includes('con el') || lowerMsg.includes('con él');
+
+    if (conversationHistory && conversationHistory.length > 0) {
+      const fullHistoryText = conversationHistory.map(h => h.content).join(' ').toLowerCase();
+      if (clinicContext?.doctors) {
+        for (const doc of clinicContext.doctors) {
+          const docLower = doc.name.toLowerCase();
+          if (fullHistoryText.includes(docLower)) {
+            if (historyPrefersFemale && (docLower.includes('dra') || docLower.includes('dra.'))) {
+              historyDoctor = doc.name;
+              break;
+            } else if (historyPrefersMale && (docLower.includes('dr.') || docLower.includes('dr '))) {
+              historyDoctor = doc.name;
+              break;
+            } else if (!historyDoctor) {
+              historyDoctor = doc.name;
+            }
+          }
+        }
+      }
+    }
+
     // Turno
-    if (lowerMsg.includes('turno') || lowerMsg.includes('cita') || lowerMsg.includes('consulta')) {
+    const isBooking = lowerMsg.includes('turno') || lowerMsg.includes('cita') || lowerMsg.includes('consulta')
+      || lowerMsg.includes('ella') || lowerMsg.includes('confirmo') || lowerMsg.includes('viene bien')
+      || lowerMsg.includes('quedamos');
+
+    if (isBooking) {
       const isMadrugada = lowerMsg.includes('madrugada') || lowerMsg.includes('3:30');
       const shift = lowerMsg.includes('tarde') ? 'tarde' :
-                    lowerMsg.includes('mañana') ? 'manana' : 'indistinto';
+                    (lowerMsg.includes('mañana') || lowerMsg.includes('manana')) ? 'manana' : 'indistinto';
 
       let matchedDoctor: string | null = null;
       if (clinicContext?.doctors) {
@@ -250,18 +292,20 @@ export class AIService {
         }
       }
 
+      const finalDoctor = matchedDoctor || historyDoctor || (clinicContext?.doctors?.[0]?.name ?? 'Profesional de cabecera');
+
       return {
         intent: 'SOLICITUD_TURNO',
         confidence: 0.94,
         actionRequired: isMadrugada ? 'REPLY_ONLY' : 'CREATE_PENDING_BOOKING',
         entities: {
-          doctorName: matchedDoctor || (clinicContext?.doctors?.[0]?.name ?? 'Profesional de cabecera'),
+          doctorName: finalDoctor,
           preferredShift: shift,
           urgency: 'baja'
         },
         suggestedReply: isMadrugada
           ? 'Hola. Los turnos de atención se brindan exclusivamente en horario hábil diurno.'
-          : `Hola! Registramos tu solicitud para consultar turnos disponibles${matchedDoctor ? ` con ${matchedDoctor}` : ''}. La secretaría revisará la agenda y te enviará la confirmación definitiva a la brevedad.`,
+          : `Hola! Registramos tu solicitud para consultar turnos disponibles con ${finalDoctor}. La secretaría revisará la agenda y te enviará la confirmación definitiva a la brevedad.`,
         ragSources: relevantChunks.length > 0 ? relevantChunks.map(c => c.title) : ['atencion_y_modalidades.md'],
         latencyMs: elapsedMs,
         engineUsed: 'deterministic-fallback'
