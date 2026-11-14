@@ -9,6 +9,7 @@
 - General / Pacientes: [`tests/002_adversarial_breaker.hurl`](file:///home/jmro/Documents/Development/edi3-ai-production/tests/002_adversarial_breaker.hurl) (22 ataques)
 - Específica RAG Multitenant: [`tests/003_rag_breaker.hurl`](file:///home/jmro/Documents/Development/edi3-ai-production/tests/003_rag_breaker.hurl) (26 ataques destructivos)
 - Específica Memoria e Historial Conversacional: [`tests/004_conversation_history_breaker.hurl`](file:///home/jmro/Documents/Development/edi3-ai-production/tests/004_conversation_history_breaker.hurl) (12 ataques y pruebas BDD)
+- Específica Hardening, Rate Limiting y Métricas: [`tests/005_production_hardening_breaker.hurl`](file:///home/jmro/Documents/Development/edi3-ai-production/tests/005_production_hardening_breaker.hurl) (8 tests y verificación de contratos)
 
 ---
 
@@ -159,11 +160,52 @@ La incorporación de `conversationHistory` en el endpoint `POST /api/v1/patient-
 
 ---
 
-## 7. Veredicto del Breaker
+## 7. Matriz de Riesgos de Producción (OWASP LLM10: Unbounded Consumption / Denial of Wallet & LLM02: Sensitive Info Leakage)
 
-Las suites de auditoría adversarial quedan formalizadas:
+En el paso a producción (US-007 / Issue #7), el microservicio expone dos vectores de falla sistémica:
+1. **Denial of Wallet / DoS (OWASP LLM10):** Ráfagas de peticiones abusivas que agotan cuotas de API externa (Gemini), saturan la CPU del servidor de inferencia local (Ollama) o generan colapso de memoria por peticiones concurrentes sin límite de tasa.
+2. **PII & Secrets Leakage (OWASP LLM02):** Fuga de teléfonos de pacientes, identificadores de salud o API keys en respuestas directas, stacks de error HTTP o logs en texto plano.
+
+### Matriz de Ataques y Verificaciones (`tests/005_production_hardening_breaker.hurl`)
+
+| ID | Vector de Ataque | Categoría OWASP LLM | Código HTTP Esperado | Invariante / Salvaguarda Requerida |
+| :--- | :--- | :--- | :--- | :--- |
+| **01** | Línea Base Health Check | Observabilidad / Health | `200 OK` | Endpoint `GET /health` activo con `status: "ok"` y `uptime`. |
+| **02** | Contrato `GET /metrics` | Observabilidad / FinOps | `200 OK` | Retorna `uptimeSeconds`, `requestsTotal`, `tokensInEstimated`, `tokensOutEstimated`, `costEstimateUsd` y desglose `engineUsage` (`ollama`, `gemini`, `fallback`). |
+| **03** | Trazabilidad y Contador Incremental | Observabilidad / Auditoría | `200 OK` | Cada `patient-message` procesado incrementa `requestsTotal` y acumula tokens/costos. |
+| **04** | Intento de Extracción de PII en Respuesta | LLM02 (PII Leakage) | `200 OK` | Censura y ofuscación: el bot jamás debe repetir en texto plano números telefónicos completos (`+549...`) ni números de DNI en `suggestedReply`. |
+| **05** | Fuga de Secretos en Errores 400 Malformados | LLM02 (Information Disclosure) | `400 Bad Request` | Payloads malformados con inyección de solicitud de secrets (`GEMINI_API_KEY`, tokens) jamás deben reflejar secretos del entorno en `error` o `message`. |
+| **06** | Inyección de PII en RAG Documentos | LLM02 (Sensitive Data Storing) | `201 Created` | Manejo seguro de metadatos confidenciales en documentos indexados. |
+| **07** | Ráfaga Rápida / DoS Flooding | LLM10 (Unbounded Consumption) | `200 OK` / `429 Too Many Requests` | Capacidad de absorber ráfagas controladas y activar mitigación antes del colapso del proceso. |
+| **08** | Límite de Tasa Saturado (Rate Limit Hit) | LLM10 (Denial of Wallet) | `429 Too Many Requests` | Encabezado estándar `Retry-After` presente cuando se satura el cupo por ventana de tiempo (ej. Fastify `@fastify/rate-limit`). |
+
+---
+
+## 8. Salvaguardas para el Builder (Implementación de US-007)
+
+1. **Endpoint `GET /metrics` en memoria centralizada:**
+   - Crear un singleton o acumulador atómico en memoria (`metricsTracker`) que registre:
+     - `requestsTotal`: Contador por request procesada.
+     - `tokensInEstimated` / `tokensOutEstimated`: Estimación heurística (~4 caracteres por token) o tokens devueltos por el proveedor.
+     - `costEstimateUsd`: Cálculo proporcional con pricing de Gemini/Ollama.
+     - `engineUsage`: Incrementos por motor de inferencia utilizado (`ollama`, `gemini`, `fallback`).
+     - `uptimeSeconds`: `Math.floor((Date.now() - startTime) / 1000)`.
+
+2. **Rate Limiting con Fastify:**
+   - Registrar `@fastify/rate-limit` con límites por IP/tenant y respuesta HTTP `429 Too Many Requests`.
+
+3. **Filtro de Censura de PII:**
+   - Asegurar que los números telefónicos en logs y en respuestas sensibles se enmascaren con regex (`+549******2233`).
+   - El manejador de errores de Fastify debe filtrar cualquier mensaje que contenga substrings sospechosos de tokens o variables de entorno.
+
+---
+
+## 9. Veredicto del Breaker
+
+Las suites de auditoría adversarial y hardening quedan formalizadas:
 - [`tests/002_adversarial_breaker.hurl`](file:///home/jmro/Documents/Development/edi3-ai-production/tests/002_adversarial_breaker.hurl) (22 tests)
 - [`tests/003_rag_breaker.hurl`](file:///home/jmro/Documents/Development/edi3-ai-production/tests/003_rag_breaker.hurl) (26 tests)
 - [`tests/004_conversation_history_breaker.hurl`](file:///home/jmro/Documents/Development/edi3-ai-production/tests/004_conversation_history_breaker.hurl) (12 tests)
+- [`tests/005_production_hardening_breaker.hurl`](file:///home/jmro/Documents/Development/edi3-ai-production/tests/005_production_hardening_breaker.hurl) (8 tests y verificación de contratos)
 
-El Builder tiene el marco de pruebas destructivas y contratos claros para ejecutar la implementación de US-006 sin romper invariantes ni degradar userspace.
+El Builder cuenta con las especificaciones destructivas, contratos de observabilidad y verificaciones de seguridad listas para proceder con la implementación de US-007.

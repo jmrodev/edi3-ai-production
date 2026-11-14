@@ -1,11 +1,13 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import rateLimit from '@fastify/rate-limit';
 import { 
   PatientMessageRequestSchema, 
   KnowledgeDocumentRequestSchema 
 } from './schemas.js';
 import { dbInstance } from './db.js';
 import { aiService } from './services/ai.js';
+import { metricsService } from './services/metrics.js';
 
 const startTime = Date.now();
 
@@ -17,16 +19,41 @@ export function buildApp() {
 
   app.register(cors, { origin: true });
 
+  // Rate Limiting: 120 peticiones por minuto por IP/tenant para frenar DoS / Denial of Wallet
+  app.register(rateLimit, {
+    max: 120,
+    timeWindow: '1 minute',
+    errorResponseBuilder: (request, context) => ({
+      statusCode: 429,
+      error: 'Too Many Requests',
+      message: `Límite de tasa excedido. Máximo permitido: ${context.max} peticiones por ${context.after}.`
+    })
+  });
+
+  // Hook global de observabilidad
+  app.addHook('onRequest', async (request) => {
+    metricsService.recordRequest(request.url);
+  });
+
   app.setErrorHandler((error, request, reply) => {
+    if (error.statusCode === 429) {
+      return reply.status(429).send({
+        error: 'TOO_MANY_REQUESTS',
+        message: error.message || 'Límite de peticiones excedido.'
+      });
+    }
+
     if (error.validation || error.statusCode === 400 || error.message.includes('JSON')) {
+      // Sanitización de PII y secrets en respuestas de error
+      const safeMsg = metricsService.maskPII(error.message || 'Payload malformado o validación fallida.');
       return reply.status(400).send({
         error: 'BAD_REQUEST',
-        message: error.message || 'Payload malformado o validación fallida.'
+        message: safeMsg
       });
     }
     reply.status(error.statusCode || 500).send({
       error: 'INTERNAL_SERVER_ERROR',
-      message: error.message || 'Error interno del servidor.'
+      message: 'Error interno del servidor.'
     });
   });
 
@@ -35,6 +62,11 @@ export function buildApp() {
       status: 'ok',
       uptime: Math.floor((Date.now() - startTime) / 1000)
     };
+  });
+
+  // GET /metrics (Observabilidad & Producción - US-007)
+  app.get('/metrics', async () => {
+    return metricsService.getMetrics();
   });
 
   // Ingestión dinámica de RAG (Vector Database con aislamiento multitenant)
@@ -182,6 +214,13 @@ export function buildApp() {
       message,
       clinicContext,
       parseResult.data.conversationHistory
+    );
+
+    // Registro de consumo de tokens y motor en observabilidad
+    metricsService.recordAIUsage(
+      result.engineUsed || 'deterministic-fallback',
+      message,
+      result.suggestedReply
     );
 
     return reply.status(200).send({

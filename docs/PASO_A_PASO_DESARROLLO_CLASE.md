@@ -329,3 +329,19 @@ Para cumplir con la directiva obligatoria de desarrollo estructurado de software
    - Si el paciente responde pronombres relativos como *'prefiero con ella'* o *'confirmo ese'*, el modelo (o el fallback) analiza el hilo previo del historial y extrae la profesional sugerida (`Dra. Gomez` / `Dr. Perez`).
 3. **Verificación Adversarial Completa:**
    - 12/12 nuevos escenarios en `tests/004_conversation_history_breaker.hurl` superados al 100%. Total suite de regresión y seguridad: **64/64 requests exitosas**.
+
+---
+
+## Fase 4.5: Hardening de Producción, Observabilidad y Rate Limiting (Milestone M7)
+
+1. **Observabilidad en Tiempo Real (`GET /metrics`):**
+   - Implementado `src/services/metrics.ts` para rastreo atómico en memoria.
+   - Exposición de `uptimeSeconds`, `requestsTotal`, `tokensInEstimated`, `tokensOutEstimated`, `costEstimateUsd` y distribución de motores (`ollama`, `gemini`, `fallback`).
+2. **Control de Abuso y Denial of Wallet:**
+   - `@fastify/rate-limit` configurado en 120 peticiones por minuto por IP/tenant con retorno estandarizado HTTP `429 Too Many Requests`.
+3. **Censura y Protección de PII:**
+   - Máscara automática de números telefónicos (`+549*****2233`) y bloqueo de filtración de claves en los payloads de error.
+4. **CI Continuo y Evals Automáticos:**
+   - Pipeline de GitHub Actions en `.github/workflows/ci.yml` ejecutando la suite completa de 79 tests Hurl en cada push.
+5. **Verificación de Seguridad:**
+   - 15/15 tests en `tests/005_production_hardening_breaker.hurl` verdes. Total microservicio: **79/79 requests exitosas (100%)**.
