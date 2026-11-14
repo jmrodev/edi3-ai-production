@@ -1,5 +1,4 @@
-GET http://localhost:4010/health
+GET http://localhost:8000/health
 HTTP 200
 [Asserts]
-header "sl-violations" not exists
 jsonpath "$.status" exists

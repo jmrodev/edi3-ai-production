@@ -272,3 +272,17 @@ Antes de iniciar la construcción del código, se auditaron las reglas vivas de 
 > 3. **Separación de responsabilidades:** Los apuntes de la materia no se mezclan con los datos de producción.
 > 4. **Defensa en profundidad:** Diseñar asumiendo que los usuarios enviarán entradas maliciosas, malformadas o confusas.
 > 5. **Separación de autoría:** Antes de picar código, un agente destructor (Breaker) audita el diseño para fijar las invariantes que el código final jamás debe romper.
+
+---
+
+## Fase 4.1: Gobernanza y Trazabilidad en GitHub (Issues y Milestones)
+
+Para cumplir con la directiva obligatoria de desarrollo estructurado de software en equipo:
+1. **Repositorio Remoto Oficial:** Sincronizado en `https://github.com/jmrodev/edi3-ai-production`.
+2. **Milestones Definidos:**
+   - **M1:** Especificación y Contratos OpenAPI (100% completado - Issue #1 cerrado).
+   - **M2:** Testing Adversarial y Breaker Fuzzing (100% completado - Issue #2 cerrado).
+   - **M3:** Backend Fastify y Validación Zod (100% completado - Issue #3 cerrado).
+   - **M4:** Base Vectorial SQLite y RAG Multitenant (Abierto - Issue #4 en curso).
+   - **M5:** Orquestación de IA y Function Calling (Abierto - Issue #5 planificado).
+3. **Regla de Commits Trazables:** Ningún cambio de código se sube sin su correspondiente issue resuelto o enlazado.

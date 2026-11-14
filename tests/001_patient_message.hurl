@@ -8,8 +8,9 @@ jsonpath "$.status" == "ok"
 POST http://localhost:8000/api/v1/patient-message
 Content-Type: application/json
 {
+  "tenantId": "cima-salud",
   "patientId": 12,
-  "phone": "5491122334455",
+  "phone": "+5491122334455",
   "message": "Hola, necesito un turno con el Dr. Perez para el martes a la mañana"
 }
 HTTP 200

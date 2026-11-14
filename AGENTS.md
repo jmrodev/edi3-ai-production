@@ -17,6 +17,11 @@ Este repositorio implementa el proyecto integrador de Inteligencia Artificial pa
 ---
 
 ## 2. Invariantes Críticas de Seguridad e IA (Linus Torvalds + OWASP LLM)
+- **Gobernanza de Tareas en GitHub (Issues & Milestones):**
+  - **Requisito Previo Obligatorio:** Antes de comenzar cualquier tarea, funcionalidad o refactor, se debe registrar el Issue en GitHub y asignarlo al Milestone correspondiente.
+  - **Trazabilidad de Commits:** Todo commit debe vincularse al Issue (ej. `feat(api): validación con Zod (resolves #1)`).
+  - **Cierre Formal:** Al finalizar y pasar todos los tests (Hurl/Breaker), el Issue debe cerrarse formalmente y marcarse el avance en el Milestone.
+
 - **Cero Confianza en Salidas de LLMs:** La salida del modelo es `untrusted input`. Jamás pasa a ejecución directa sin validación estricta con esquemas Zod.
 - **Aislamiento Multitenant en BD:** Toda query de búsqueda vectorial debe incluir obligatoriamente el filtro relacional en el servidor (`WHERE tenant_id = :tenant_id`). Jamás se confía en el prompt para aislar datos.
 - **Plano de Control vs. Datos:** El contenido externo (prompts de usuarios, WhatsApp, RAG) se encapsula en tags XML pasivos (`<patient_message>...</patient_message>`).
