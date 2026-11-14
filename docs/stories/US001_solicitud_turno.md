@@ -25,18 +25,29 @@
 
 ---
 
-### Escenario 2: Solicitud sin médico pero con turno preferido (Médico de cabecera implícito)
-- **Dado** un paciente que consulta por un turno general,
-- **Cuando** envía el mensaje: `"Hola, necesito sacar un turno para control anual por la tarde"`,
+### Escenario 2: Solicitud sin médico explícito (Contrapregunta Obligatoria de Profesional de Cabecera)
+- **Dado** un paciente que consulta por un turno general sin nombrar al médico,
+- **Y** en el historial o contexto figura un profesional previo registrado (ej. `"Dra. Maria Cecilia Scheerle"`),
+- **Cuando** envía el mensaje: `"Hola, necesito sacar un turno para control anual la semana que viene"`,
 - **Entonces** el sistema responde con HTTP 200,
 - **Y** el campo `intent` es `"SOLICITUD_TURNO"`,
-- **Y** `entities.doctorName` es `null`,
-- **Y** `entities.preferredShift` es `"tarde"`,
-- **Y** `actionRequired` es `"CREATE_PENDING_BOOKING"`.
+- **Y** el campo `actionRequired` es `"REPLY_ONLY"`,
+- **Y** `entities.requiresConfirmation` es `true`,
+- **Y** `suggestedReply` formula una contrapregunta cordial: *"En nuestros registros figura que tu última consulta fue con la Dra. Maria Cecilia Scheerle (Psiquiatría). ¿Deseas solicitar el turno con ella o prefieres consultar por otro especialista?"*.
 
 ---
 
-### Escenario 3: Desambiguación médica requerida
+### Escenario 3: Solicitud con Franja Horaria Incompatible (Aviso de Turno de Médico)
+- **Dado** un paciente que pide turno a la mañana con un profesional que solo atiende de tarde según su agenda,
+- **Cuando** envía el mensaje: `"Quiero un turno con la Dra. Scheerle el martes por la mañana"`,
+- **Entonces** el sistema responde con HTTP 200,
+- **Y** el campo `intent` es `"SOLICITUD_TURNO"`,
+- **Y** `actionRequired` es `"REPLY_ONLY"`,
+- **Y** `suggestedReply` informa amablemente la restricción: *"Ten en cuenta que la Dra. Scheerle atiende únicamente en el turno tarde. El primer turno disponible es el martes a las 15:00 hs. ¿Te gustaría que reservemos ese espacio?"*.
+
+---
+
+### Escenario 4: Desambiguación médica requerida (Mismo apellido)
 - **Dado** un paciente que pide turno con un apellido común compartido por varios profesionales (ej. `"Perez"`),
 - **Cuando** envía el mensaje: `"Quiero atenderme con Perez el viernes"`,
 - **Entonces** el sistema responde con HTTP 200,
