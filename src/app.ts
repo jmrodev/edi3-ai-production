@@ -4,6 +4,7 @@ import {
   PatientMessageRequestSchema, 
   KnowledgeDocumentRequestSchema 
 } from './schemas.js';
+import { dbInstance } from './db.js';
 
 const startTime = Date.now();
 
@@ -35,7 +36,7 @@ export function buildApp() {
     };
   });
 
-  // Ingestión dinámica de RAG
+  // Ingestión dinámica de RAG (Vector Database con aislamiento multitenant)
   app.post('/api/v1/knowledge/documents', async (request, reply) => {
     const parseResult = KnowledgeDocumentRequestSchema.safeParse(request.body);
     if (!parseResult.success) {
@@ -45,11 +46,13 @@ export function buildApp() {
       });
     }
 
-    const { documentId } = parseResult.data;
+    const { tenantId, documentId, title, content } = parseResult.data;
+    const chunksCount = dbInstance.upsertDocument(tenantId, documentId, title, content);
+
     return reply.status(201).send({
       status: 'indexed',
       documentId,
-      chunksIndexed: 3
+      chunksIndexed: chunksCount
     });
   });
 

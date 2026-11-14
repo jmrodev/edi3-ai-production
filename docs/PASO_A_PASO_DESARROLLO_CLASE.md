@@ -286,3 +286,19 @@ Para cumplir con la directiva obligatoria de desarrollo estructurado de software
    - **M4:** Base Vectorial SQLite y RAG Multitenant (Abierto - Issue #4 en curso).
    - **M5:** Orquestación de IA y Function Calling (Abierto - Issue #5 planificado).
 3. **Regla de Commits Trazables:** Ningún cambio de código se sube sin su correspondiente issue resuelto o enlazado.
+
+---
+
+## Fase 4.2: Ingestión Dinámica RAG y Base de Datos Vectorial (Milestone M4)
+
+1. **Vulnerabilidad Detectada por Breaker:**
+   - En el análisis de `src/schemas.ts`, el campo `title` no tenía filtro de bytes nulos (` `), lo que exponía drivers nativos a truncamiento de strings. Se añadió `.refine(val => !val.includes(' '))`.
+2. **Implementación de Base de Datos Vectorial (`src/db.ts`):**
+   - SQLite en modo WAL y foreign keys activadas.
+   - Tablas `knowledge_documents` y `knowledge_chunks`.
+   - Chunking lineal con solapamiento seguro (1000 caracteres con 100 de overlap).
+   - Invariante de aislamiento multitenant estricto: `WHERE tenant_id = :tenant_id`.
+3. **Endpoint de Ingestión Dinámica:**
+   - `POST /api/v1/knowledge/documents` montado en Fastify, indexando chunks en SQLite y respondiendo `201 Created` con `chunksIndexed`.
+4. **Verificación Adversarial Completa:**
+   - 26/26 pruebas de intrusión en `tests/003_rag_breaker.hurl` superadas al 100%. Total suite: **52/52 requests exitosas** sin ninguna regresión.

@@ -30,7 +30,7 @@ export const PatientMessageRequestSchema = z.object({
 export const KnowledgeDocumentRequestSchema = z.object({
   tenantId: z.string().regex(/^[a-z0-9_-]+$/).min(2).max(64),
   documentId: z.string().regex(/^[a-z0-9_-]+$/).min(2).max(64),
-  title: z.string().min(3).max(200),
+  title: z.string().min(3).max(200).refine(val => !val.includes('\0'), 'Caracteres nulos prohibidos'),
   content: z.string().min(10).max(50000).refine(val => !val.includes('\0'), 'Caracteres nulos prohibidos')
 }).strict();
 
