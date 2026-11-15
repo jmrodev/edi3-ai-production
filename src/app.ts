@@ -211,12 +211,13 @@ export function buildApp() {
       });
     }
 
-    // Procesamiento con IA Cascada (Ollama Local -> Gemini -> Deterministic Fallback)
+    // Procesamiento con IA Cascada (Gemini Flash Lite -> Ollama Local -> Deterministic Fallback)
     const result = await aiService.processMessage(
       parseResult.data.tenantId,
       message,
       clinicContext,
-      parseResult.data.conversationHistory
+      parseResult.data.conversationHistory,
+      parseResult.data.toolResult
     );
 
     // Registro de consumo de tokens y motor en observabilidad
@@ -230,10 +231,12 @@ export function buildApp() {
       intent: result.intent,
       confidence: result.confidence,
       actionRequired: result.actionRequired,
+      toolCall: result.toolCall,
       entities: result.entities,
       suggestedReply: result.suggestedReply,
       ragSources: result.ragSources,
-      latencyMs: result.latencyMs
+      latencyMs: result.latencyMs,
+      engineUsed: result.engineUsed
     });
   });
 

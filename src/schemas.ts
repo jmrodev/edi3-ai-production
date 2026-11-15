@@ -23,6 +23,10 @@ export const PatientMessageRequestSchema = z.object({
   phone: z.string().regex(/^\+?[1-9]\d{7,14}$/, 'Formato telefónico E.164 inválido'),
   message: z.string().min(1).max(1000).refine(val => !val.includes('\0'), 'Caracteres nulos prohibidos'),
   clinicContext: ClinicContextSchema.optional(),
+  toolResult: z.object({
+    tool: z.string().min(1).max(100),
+    data: z.any()
+  }).optional(),
   conversationHistory: z.array(z.object({
     role: z.enum(['user', 'assistant', 'paciente', 'asistente']),
     content: z.string().min(1).max(2000)

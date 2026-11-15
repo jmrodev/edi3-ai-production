@@ -29,7 +29,7 @@ export class MetricsService {
   }
 
   public recordAIUsage(
-    engine: 'ollama-qwen2.5:3b' | 'gemini-2.5-flash' | 'deterministic-fallback',
+    engine: 'ollama-qwen2.5:3b' | 'gemini-2.5-flash' | 'gemini-3.5-flash-lite' | 'deterministic-fallback',
     inputText: string,
     outputText: string
   ) {

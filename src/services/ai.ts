@@ -4,7 +4,15 @@ import { dbInstance } from '../db.js';
 export interface AIAnalysisResult {
   intent: 'SOLICITUD_TURNO' | 'CONSULTA_ARANCEL' | 'CANCELACION_REPROGRAMACION' | 'INFORMACION_HORARIOS' | 'OTRO';
   confidence: number;
-  actionRequired: 'REPLY_ONLY' | 'CREATE_PENDING_BOOKING' | 'ESCALATE_HUMAN';
+  actionRequired: 'REPLY_ONLY' | 'CREATE_PENDING_BOOKING' | 'ESCALATE_HUMAN' | 'CALL_TOOL';
+  toolCall?: {
+    tool: 'getDoctorSchedule' | 'getDoctorAvailability';
+    params: {
+      doctorId?: number;
+      doctorName?: string;
+      date?: string;
+    };
+  };
   entities: {
     doctorName: string | null;
     preferredShift: 'manana' | 'tarde' | 'indistinto';
@@ -13,7 +21,7 @@ export interface AIAnalysisResult {
   suggestedReply: string;
   ragSources: string[];
   latencyMs: number;
-  engineUsed?: 'ollama-qwen2.5:3b' | 'gemini-2.5-flash' | 'deterministic-fallback';
+  engineUsed?: 'ollama-qwen2.5:3b' | 'gemini-2.5-flash' | 'gemini-3.5-flash-lite' | 'deterministic-fallback';
 }
 
 const SYSTEM_INSTRUCTION = `Eres el asistente virtual clínico oficial de atención por mensajería para consultorios médicos.
@@ -22,20 +30,26 @@ Tu función es clasificar la intención del paciente, extraer entidades médicas
 REGLAS INQUEBRANTABLES DE NEGOCIO Y SEGURIDAD:
 1. NUNCA confirmes turnos definitivos; solo puedes registrar una solicitud de reserva pendiente ('CREATE_PENDING_BOOKING') para aprobación de la secretaría humana.
 2. Si el paciente no aclara el médico pero tiene un médico de cabecera en el contexto, genera una contrapregunta de confirmación y pon 'REPLY_ONLY'.
-3. Si el paciente consulta si un médico está atendiendo ahora o cuáles son sus días/horarios:
-   - Revisa el campo 'schedules' o 'attentionHours' del profesional en <contexto_clinico>.
-   - Informa con total precisión los días de la semana y horarios en los que atiende dicho médico (distinguiendo atención presencial de virtual si corresponde).
-   - Recuerda que la secretaría administrativa atiende en su horario general, pero los médicos atienden según su propio cronograma de turnos.
-4. Si el paciente pide un turno fuera de la franja horaria del médico (ej. pide tarde pero el médico atiende a la mañana), avisa amablemente y ofrece el turno disponible de su franja.
-5. CERO PRESCRIPCIÓN: Prohibido indicar medicamentos o dosis. Si mencionan fármacos controlados (clonazepam, morfina), asigna intent 'OTRO' y actionRequired 'ESCALATE_HUMAN'.
-6. TRIAGE VITAL: Dolor de pecho, dificultad respiratoria o síntomas coronarios exigen derivación urgente a emergencias (107/911) con urgency 'alta' y 'ESCALATE_HUMAN'.
-7. Toda información sobre normas o coberturas debe fundamentarse estrictamente en el contexto institucional o RAG provisto. Si no tienes datos, indica que la secretaría humana responderá a la brevedad.
+3. TOOL CALLING / CONSULTAS DINÁMICAS:
+   - Si el paciente pregunta por horarios, días de atención, o si un médico está atendiendo, y NO tienes la información completa en <resultado_herramienta> ni en el contexto, solicita la herramienta estableciendo "actionRequired": "CALL_TOOL", con "toolCall": { "tool": "getDoctorSchedule", "params": { "doctorName": "Nombre del médico" } }.
+   - Si el paciente pregunta por turnos disponibles, próximas fechas libres o huecos en agenda, y NO tienes los turnos en <resultado_herramienta>, solicita la herramienta con "actionRequired": "CALL_TOOL", con "toolCall": { "tool": "getDoctorAvailability", "params": { "doctorName": "Nombre del médico", "date": "YYYY-MM-DD" } }.
+   - Cuando <resultado_herramienta> esté presente en el prompt con los datos devueltos por el backend, NO vuelvas a pedir la tool: responde al paciente con precisión usando esos datos ("actionRequired": "REPLY_ONLY" o "CREATE_PENDING_BOOKING").
+4. CERO PRESCRIPCIÓN: Prohibido indicar medicamentos o dosis. Si mencionan fármacos controlados (clonazepam, morfina), asigna intent 'OTRO' y actionRequired 'ESCALATE_HUMAN'.
+5. TRIAGE VITAL: Dolor de pecho, dificultad respiratoria o síntomas coronarios exigen derivación urgente a emergencias (107/911) con urgency 'alta' y 'ESCALATE_HUMAN'.
+6. Toda información sobre normas o coberturas debe fundamentarse estrictamente en el contexto institucional o RAG provisto. Si no tienes datos, indica que la secretaría humana responderá a la brevedad.
 
 Debes responder ÚNICAMENTE un objeto JSON válido con este esquema exacto:
 {
   "intent": "SOLICITUD_TURNO" | "CONSULTA_ARANCEL" | "CANCELACION_REPROGRAMACION" | "INFORMACION_HORARIOS" | "OTRO",
   "confidence": 0.0 a 1.0,
-  "actionRequired": "REPLY_ONLY" | "CREATE_PENDING_BOOKING" | "ESCALATE_HUMAN",
+  "actionRequired": "REPLY_ONLY" | "CREATE_PENDING_BOOKING" | "ESCALATE_HUMAN" | "CALL_TOOL",
+  "toolCall": {
+    "tool": "getDoctorSchedule" | "getDoctorAvailability",
+    "params": {
+      "doctorName": string,
+      "date": string (opcional)
+    }
+  } (solo obligatorio si actionRequired es CALL_TOOL),
   "entities": {
     "doctorName": string | null,
     "preferredShift": "manana" | "tarde" | "indistinto",
@@ -62,7 +76,8 @@ export class AIService {
     tenantId: string,
     message: string,
     clinicContext?: any,
-    conversationHistory?: any[]
+    conversationHistory?: any[],
+    toolResult?: any
   ): Promise<AIAnalysisResult> {
     const start = Date.now();
 
@@ -144,9 +159,14 @@ export class AIService {
       historyContext = `\n<historial_conversacion>\n${sanitizedHistory}\n</historial_conversacion>`;
     }
 
+    // Resultado de Tool Calling inyectado dinámicamente si el backend lo resolvió
+    const toolContext = toolResult
+      ? `\n<resultado_herramienta>\n${JSON.stringify(toolResult, null, 2)}\n</resultado_herramienta>`
+      : '';
+
     // Construcción del contexto clínico seguro
     const clinicData = clinicContext ? `\n<contexto_clinico>\n${JSON.stringify(clinicContext, null, 2)}\n</contexto_clinico>` : '';
-    const userPrompt = `${clinicData}${ragContext}${historyContext}\n\n<mensaje_paciente>\n${message}\n</mensaje_paciente>`;
+    const userPrompt = `${clinicData}${ragContext}${historyContext}${toolContext}\n\n<mensaje_paciente>\n${message}\n</mensaje_paciente>`;
 
     // 3. Cascada de Inferencia: Nivel 1 (Google Gemini 3.5 Flash Lite - ~1.5s de latencia)
     if (this.geminiClient) {
