@@ -5,11 +5,13 @@ export const DoctorContextSchema = z.object({
   name: z.string().min(2).max(100),
   specialty: z.string().min(2).max(100),
   consultationPrice: z.number().positive().min(0.01).optional(),
-  nextFreeSlot: z.string().max(50).nullable().optional()
+  nextFreeSlot: z.string().max(50).nullable().optional(),
+  schedules: z.array(z.string()).max(20).optional()
 }).strict();
 
 export const ClinicContextSchema = z.object({
   clinicName: z.string().max(120).optional(),
+  currentTime: z.string().max(120).optional(),
   secretaryHours: z.string().max(200).optional(),
   address: z.string().max(200).optional(),
   doctors: z.array(DoctorContextSchema).max(30).optional()
@@ -22,7 +24,7 @@ export const PatientMessageRequestSchema = z.object({
   message: z.string().min(1).max(1000).refine(val => !val.includes('\0'), 'Caracteres nulos prohibidos'),
   clinicContext: ClinicContextSchema.optional(),
   conversationHistory: z.array(z.object({
-    role: z.enum(['user', 'assistant']),
+    role: z.enum(['user', 'assistant', 'paciente', 'asistente']),
     content: z.string().min(1).max(2000)
   }).strict()).max(10).optional()
 }).strict();
