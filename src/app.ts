@@ -171,9 +171,12 @@ export function buildApp() {
       });
     }
 
-    // Invariante 4: Solicitud de Turno
+    // Invariante 4: Solicitud de Turno (excluyendo consultas de precio/arancel)
+    const priceTerms = ['precio', 'costo', 'arancel', 'cuanto cobra', 'cuánto cobra', 'cuanto sale', 'cuánto sale', 'valor'];
+    const isPriceQuery = priceTerms.some(term => lowerMsg.includes(term));
+
     const bookingTerms = ['turno', 'cita', 'atender', 'consulta'];
-    const isBooking = bookingTerms.some(term => lowerMsg.includes(term));
+    const isBooking = !isPriceQuery && bookingTerms.some(term => lowerMsg.includes(term));
     if (isBooking) {
       // Verificar si hay doctor con ese nombre
       let matchedDoctor: string | null = null;
