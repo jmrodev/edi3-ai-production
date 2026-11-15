@@ -144,7 +144,23 @@ export class AIService {
     const clinicData = clinicContext ? `\n<contexto_clinico>\n${JSON.stringify(clinicContext, null, 2)}\n</contexto_clinico>` : '';
     const userPrompt = `${clinicData}${ragContext}${historyContext}\n\n<mensaje_paciente>\n${message}\n</mensaje_paciente>`;
 
-    // 3. Cascada de Inferencia: Nivel 1 (Ollama Local qwen2.5:3b)
+    // 3. Cascada de Inferencia: Nivel 1 (Google Gemini 3.5 Flash Lite - ~1.5s de latencia)
+    if (this.geminiClient) {
+      try {
+        const geminiRes = await this.callGemini(userPrompt);
+        if (geminiRes) {
+          return {
+            ...geminiRes,
+            latencyMs: Date.now() - start,
+            engineUsed: 'gemini-3.5-flash-lite'
+          };
+        }
+      } catch (err: any) {
+        console.warn('[edi3-ai-production] Gemini falló, cayendo a Ollama local:', err.message);
+      }
+    }
+
+    // 4. Cascada de Inferencia: Nivel 2 (Ollama Local qwen2.5:3b - contingencia offline)
     try {
       const ollamaRes = await this.callOllama(userPrompt);
       if (ollamaRes) {
@@ -155,23 +171,7 @@ export class AIService {
         };
       }
     } catch (err) {
-      // Ollama falló o no respondió en tiempo -> cae al nivel 2
-    }
-
-    // 4. Cascada de Inferencia: Nivel 2 (Google Gemini Flash)
-    if (this.geminiClient) {
-      try {
-        const geminiRes = await this.callGemini(userPrompt);
-        if (geminiRes) {
-          return {
-            ...geminiRes,
-            latencyMs: Date.now() - start,
-            engineUsed: 'gemini-2.5-flash'
-          };
-        }
-      } catch (err) {
-        // Fallback a nivel 3
-      }
+      // Ollama falló o no respondió -> cae al nivel 3
     }
 
     // 5. Nivel 3: Fallback Determinista Seguro
