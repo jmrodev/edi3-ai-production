@@ -180,7 +180,7 @@ export class AIService {
 
   private async callOllama(prompt: string): Promise<any | null> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 6000); // 6s timeout para no frenar la CPU
+    const timeout = setTimeout(() => controller.abort(), 20000); // 20s para inferencia local en CPU sin abort prematuro
 
     try {
       const response = await fetch(`${this.ollamaUrl}/api/generate`, {
