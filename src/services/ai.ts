@@ -129,12 +129,12 @@ export class AIService {
       };
     }
 
-    // Prescripción Cero (Fármacos controlados y emisión de recetas, excluyendo preguntas de costo/precio)
+    // Prescripción Cero (Fármacos controlados y emisión de recetas en el mensaje actual)
     const priceWords = ['precio', 'costo', 'arancel', 'cuanto', 'cuánto', 'valor', 'sale', 'cobra'];
     const isPrice = priceWords.some(w => lowerMsg.includes(w));
     const drugs = ['clonazepam', 'morfina', 'alprazolam', 'tramadol', 'ansiolitico'];
-    const asksHardDrugs = drugs.some(d => fullInputText.includes(d));
-    const asksPrescriptionAction = fullInputText.includes('receta') && !isPrice;
+    const asksHardDrugs = drugs.some(d => lowerMsg.includes(d));
+    const asksPrescriptionAction = lowerMsg.includes('receta') && !isPrice;
 
     if (asksHardDrugs || asksPrescriptionAction) {
       return {
