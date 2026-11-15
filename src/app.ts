@@ -152,10 +152,17 @@ export function buildApp() {
       });
     }
 
-    // Invariante 3: Prescripción Cero (Psicofármacos)
-    const medTerms = ['clonazepam', 'rivotril', 'receta', 'medicamento', 'farmaco', 'ansiolitico', 'morfina'];
-    const asksMed = medTerms.some(term => lowerMsg.includes(term));
-    if (asksMed) {
+    // Precios y Aranceles
+    const priceTerms = ['precio', 'costo', 'arancel', 'cuanto cobra', 'cuánto cobra', 'cuanto sale', 'cuánto sale', 'valor'];
+    const isPriceQuery = priceTerms.some(term => lowerMsg.includes(term));
+
+    // Invariante 3: Prescripción Cero (Psicofármacos y solicitud de emisión de recetas)
+    // Solo bloquea si NO es una consulta informativa de arancel/precio de receta
+    const medTerms = ['clonazepam', 'rivotril', 'medicamento', 'farmaco', 'ansiolitico', 'morfina'];
+    const asksControlledMed = medTerms.some(term => lowerMsg.includes(term));
+    const asksPrescriptionIssue = lowerMsg.includes('receta') && !isPriceQuery;
+
+    if (asksControlledMed || asksPrescriptionIssue) {
       return reply.status(200).send({
         intent: 'OTRO',
         confidence: 0.95,
@@ -172,8 +179,6 @@ export function buildApp() {
     }
 
     // Invariante 4: Solicitud de Turno (excluyendo consultas de precio/arancel)
-    const priceTerms = ['precio', 'costo', 'arancel', 'cuanto cobra', 'cuánto cobra', 'cuanto sale', 'cuánto sale', 'valor'];
-    const isPriceQuery = priceTerms.some(term => lowerMsg.includes(term));
 
     const bookingTerms = ['turno', 'cita', 'atender', 'consulta'];
     const isBooking = !isPriceQuery && bookingTerms.some(term => lowerMsg.includes(term));

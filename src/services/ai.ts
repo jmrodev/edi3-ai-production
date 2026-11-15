@@ -129,9 +129,14 @@ export class AIService {
       };
     }
 
-    // Prescripción Cero (Fármacos controlados)
-    const drugs = ['clonazepam', 'morfina', 'receta', 'alprazolam', 'tramadol', 'ansiolitico'];
-    if (drugs.some(d => fullInputText.includes(d))) {
+    // Prescripción Cero (Fármacos controlados y emisión de recetas, excluyendo preguntas de costo/precio)
+    const priceWords = ['precio', 'costo', 'arancel', 'cuanto', 'cuánto', 'valor', 'sale', 'cobra'];
+    const isPrice = priceWords.some(w => lowerMsg.includes(w));
+    const drugs = ['clonazepam', 'morfina', 'alprazolam', 'tramadol', 'ansiolitico'];
+    const asksHardDrugs = drugs.some(d => fullInputText.includes(d));
+    const asksPrescriptionAction = fullInputText.includes('receta') && !isPrice;
+
+    if (asksHardDrugs || asksPrescriptionAction) {
       return {
         intent: 'OTRO',
         confidence: 0.95,

@@ -5,6 +5,7 @@ export const DoctorContextSchema = z.object({
   name: z.string().min(2).max(100),
   specialty: z.string().min(2).max(100),
   consultationPrice: z.number().positive().min(0.01).optional(),
+  prescriptionPrice: z.number().min(0).optional(),
   nextFreeSlot: z.string().max(50).nullable().optional(),
   schedules: z.array(z.string()).max(20).optional()
 }).strict();
