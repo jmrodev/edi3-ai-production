@@ -23,7 +23,7 @@ export function buildApp() {
   app.register(rateLimit, {
     max: 120,
     timeWindow: '1 minute',
-    errorResponseBuilder: (request, context) => ({
+    errorResponseBuilder: (_request: any, context: any) => ({
       statusCode: 429,
       error: 'Too Many Requests',
       message: `Límite de tasa excedido. Máximo permitido: ${context.max} peticiones por ${context.after}.`
@@ -35,7 +35,7 @@ export function buildApp() {
     metricsService.recordRequest(request.url);
   });
 
-  app.setErrorHandler((error, request, reply) => {
+  app.setErrorHandler((error: any, request, reply) => {
     if (error.statusCode === 429) {
       return reply.status(429).send({
         error: 'TOO_MANY_REQUESTS',
@@ -43,7 +43,7 @@ export function buildApp() {
       });
     }
 
-    if (error.validation || error.statusCode === 400 || error.message.includes('JSON')) {
+    if (error.validation || error.statusCode === 400 || (error.message && error.message.includes('JSON'))) {
       // Sanitización de PII y secrets en respuestas de error
       const safeMsg = metricsService.maskPII(error.message || 'Payload malformado o validación fallida.');
       return reply.status(400).send({

@@ -43,6 +43,7 @@ Debes responder ÚNICAMENTE un objeto JSON válido con este esquema exacto:
 
 export class AIService {
   private geminiClient: GoogleGenAI | null = null;
+  private geminiModel = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
   private ollamaUrl = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
   private ollamaModel = process.env.OLLAMA_MODEL || 'qwen2.5:3b';
 
@@ -220,7 +221,7 @@ export class AIService {
 
     try {
       const response = await this.geminiClient.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: this.geminiModel,
         contents: prompt,
         config: {
           systemInstruction: SYSTEM_INSTRUCTION,
@@ -232,7 +233,8 @@ export class AIService {
       const text = response.text;
       if (!text) return null;
       return JSON.parse(text);
-    } catch (err) {
+    } catch (err: any) {
+      console.warn('[edi3-ai-production] Gemini call failed:', err.message);
       return null;
     }
   }
