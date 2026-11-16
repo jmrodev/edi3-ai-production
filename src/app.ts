@@ -104,9 +104,13 @@ export function buildApp() {
     const systemConfig = parseResult.data.systemConfig;
     const businessContext = parseResult.data.businessContext ?? parseResult.data.clinicContext;
     const lowerMsg = message.toLowerCase();
+    const historyText = (parseResult.data.conversationHistory || [])
+      .map(h => String(h.content).toLowerCase())
+      .join(' ');
+    const scanText = `${lowerMsg} ${historyText}`;
 
-    // Invariante: detección y contención de inyecciones de prompt (jailbreak / system prompt leaks).
-    // Patrones genéricos de seguridad; la respuesta es neutra y configurable por el cliente.
+    // Invariante: detección y contención de inyecciones de prompt (jailbreak / system prompt leaks)
+    // sobre mensaje e historial (el historial se trata como dato pasivo). La respuesta es neutra y configurable.
     const injectionPatterns = [
       'ignora todas las instrucciones',
       'system prompt',
@@ -120,9 +124,9 @@ export function buildApp() {
       'override',
       '<<sys>>'
     ];
-    const isInjection = injectionPatterns.some(p => lowerMsg.includes(p));
+    const isInjection = injectionPatterns.some(p => scanText.includes(p));
     if (isInjection) {
-      const isOverride = lowerMsg.includes('[admin override]') || lowerMsg.includes('override') || lowerMsg.includes('<<sys>>');
+      const isOverride = scanText.includes('[admin override]') || scanText.includes('override') || scanText.includes('<<sys>>');
       return reply.status(200).send({
         intent: 'OTRO',
         confidence: 0.99,
