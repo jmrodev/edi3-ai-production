@@ -38,11 +38,13 @@ paths:
               $ref: '#/components/schemas/PatientMessageRequest'
       responses:
         '200':
-          description: Procesamiento exitoso con salida tipada
+          description: Procesamiento exitoso (resultado de inferencia o envelope de contingencia)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PatientMessageResponse'
+                oneOf:
+                  - $ref: '#/components/schemas/PatientMessageResponse'
+                  - $ref: '#/components/schemas/InferenceUnavailable'
         '400':
           description: Payload malformado o validación fallida
           content:
@@ -137,7 +139,32 @@ components:
           type: object
           additionalProperties: false
           properties:
+            systemPrompt:
+              type: string
+              description: Instrucción de sistema completa construida por el cliente.
             systemRole:
+              type: string
+            operationalRules:
+              type: array
+              items:
+                type: string
+            availableTools:
+              type: array
+              maxItems: 20
+              items:
+                type: object
+                additionalProperties: false
+                required: [name, description]
+                properties:
+                  name:
+                    type: string
+                  description:
+                    type: string
+                  params:
+                    type: array
+                    items:
+                      type: string
+            neutralReply:
               type: string
             emergencyGuardrail:
               type: object
@@ -169,48 +196,15 @@ components:
               type: array
               items:
                 type: string
+        businessContext:
+          type: object
+          additionalProperties: true
+          description: Contenedor genérico de contexto de negocio del cliente (sin esquema fijo de dominio).
         clinicContext:
           type: object
-          additionalProperties: false
-          properties:
-            clinicName:
-              type: string
-              example: "Cima Salud Tandil"
-            secretaryHours:
-              type: string
-              example: "Lunes a Viernes hasta las 14:00 hs"
-            address:
-              type: string
-              example: "Montiel 1255, Tandil"
-            doctors:
-              type: array
-              maxItems: 30
-              items:
-                type: object
-                additionalProperties: false
-                required:
-                  - id
-                  - name
-                  - specialty
-                properties:
-                  id:
-                    type: integer
-                    example: 10
-                  name:
-                    type: string
-                    example: "Maria Cecilia Scheerle"
-                  specialty:
-                    type: string
-                    example: "Psiquiatría"
-                  consultationPrice:
-                    type: number
-                    minimum: 0.01
-                    example: 65000.00
-                  nextFreeSlot:
-                    type: string
-                    nullable: true
-                    maxLength: 50
-                    example: "2026-11-18 10:00"
+          additionalProperties: true
+          deprecated: true
+          description: Alias obsoleto de businessContext. Se mantiene por compatibilidad.
         conversationHistory:
           type: array
           maxItems: 10
@@ -240,12 +234,7 @@ components:
       properties:
         intent:
           type: string
-          enum:
-            - SOLICITUD_TURNO
-            - CONSULTA_PREPARACION
-            - CANCELACION_REPROGRAMACION
-            - INFORMACION_HORARIOS
-            - OTRO
+          description: Intención clasificada (definida por `allowedIntents` del cliente).
           example: SOLICITUD_TURNO
         confidence:
           type: number
@@ -259,25 +248,24 @@ components:
             - CREATE_PENDING_BOOKING
             - REPLY_ONLY
             - ESCALATE_HUMAN
+            - CALL_TOOL
           example: CREATE_PENDING_BOOKING
+        toolCall:
+          type: object
+          required: [tool]
+          properties:
+            tool:
+              type: string
+            params:
+              type: object
+              additionalProperties: true
         entities:
           type: object
-          properties:
-            doctorName:
-              type: string
-              nullable: true
-              example: "Gómez"
-            preferredShift:
-              type: string
-              enum: [manana, tarde, indistinto]
-              example: manana
-            urgency:
-              type: string
-              enum: [baja, media, alta]
-              example: baja
+          additionalProperties: true
+          description: Entidades extraídas del dominio del cliente (esquema abierto).
         suggestedReply:
           type: string
-          example: "Hola! Registramos tu solicitud para consultar turnos disponibles con el Dr. Gómez por la mañana. En breve la secretaría te enviará la confirmación."
+          example: "Hola! Registramos tu solicitud. En breve te enviaremos la confirmación."
         ragSources:
           type: array
           items:
@@ -286,6 +274,23 @@ components:
         latencyMs:
           type: number
           example: 450
+        engineUsed:
+          type: string
+          example: "gemini-3.5-flash-lite"
+
+    InferenceUnavailable:
+      type: object
+      required: [ok, error, latencyMs]
+      properties:
+        ok:
+          type: boolean
+          enum: [false]
+        error:
+          type: string
+          enum: [INFERENCE_UNAVAILABLE]
+        latencyMs:
+          type: number
+          example: 20000
 
     KnowledgeDocumentRequest:
       type: object

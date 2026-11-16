@@ -7,6 +7,7 @@ import {
 } from './schemas.js';
 import { dbInstance } from './db.js';
 import { aiService } from './services/ai.js';
+import type { AIAnalysisResult, InferenceUnavailable } from './services/ai.js';
 import { metricsService } from './services/metrics.js';
 
 const startTime = Date.now();
@@ -99,10 +100,13 @@ export function buildApp() {
       });
     }
 
-    const { message, clinicContext } = parseResult.data;
+    const { message } = parseResult.data;
+    const systemConfig = parseResult.data.systemConfig;
+    const businessContext = parseResult.data.businessContext ?? parseResult.data.clinicContext;
     const lowerMsg = message.toLowerCase();
 
-    // Invariante 1: Detección y Contención de Inyecciones de Prompt (Jailbreak / System Prompt Leaks)
+    // Invariante: detección y contención de inyecciones de prompt (jailbreak / system prompt leaks).
+    // Patrones genéricos de seguridad; la respuesta es neutra y configurable por el cliente.
     const injectionPatterns = [
       'ignora todas las instrucciones',
       'system prompt',
@@ -113,76 +117,53 @@ export function buildApp() {
       'do anything now',
       'dan',
       '[admin override]',
-      'override'
+      'override',
+      '<<sys>>'
     ];
     const isInjection = injectionPatterns.some(p => lowerMsg.includes(p));
     if (isInjection) {
-      const isOverride = lowerMsg.includes('[admin override]') || lowerMsg.includes('override');
+      const isOverride = lowerMsg.includes('[admin override]') || lowerMsg.includes('override') || lowerMsg.includes('<<sys>>');
       return reply.status(200).send({
         intent: 'OTRO',
         confidence: 0.99,
         actionRequired: isOverride ? 'ESCALATE_HUMAN' : 'REPLY_ONLY',
-        entities: {
-          doctorName: null,
-          preferredShift: 'indistinto',
-          urgency: 'baja'
-        },
-        suggestedReply: 'Hola. Como asistente virtual de la secretaría médica, solo puedo orientarte sobre turnos, horarios y normativas del consultorio.',
+        entities: {},
+        suggestedReply: systemConfig?.neutralReply
+          || 'Hola. Solo puedo ayudarte con consultas relacionadas al servicio.',
         ragSources: [],
-        latencyMs: 10
+        latencyMs: 0
       });
     }
 
-    // 1. Guardrails Rápidos basados en systemConfig provisto por el cliente
-    const systemConfig = parseResult.data.systemConfig;
-
-    // Guardrail de Emergencia (Parametrizado por el cliente)
+    // Guardrails rápidos parametrizados por el cliente (sin lógica de dominio fija)
     if (systemConfig?.emergencyGuardrail) {
       const { terms, reply: emergencyReply, actionRequired, intent, urgency } = systemConfig.emergencyGuardrail;
       const isEmergency = terms.some(term => lowerMsg.includes(term.toLowerCase()));
       if (isEmergency) {
         return reply.status(200).send({
-          intent: intent || 'EMERGENCIA',
+          intent: intent || 'ESCALATE_HUMAN',
           confidence: 0.99,
           actionRequired: actionRequired || 'ESCALATE_HUMAN',
-          entities: {
-            doctorName: null,
-            preferredShift: 'indistinto',
-            urgency: urgency || 'alta'
-          },
+          entities: { urgency },
           suggestedReply: emergencyReply,
           ragSources: [],
-          latencyMs: 12
+          latencyMs: 0
         });
       }
     }
 
-    // Guardrail de Términos Restringidos / Políticas Prohibidas (Parametrizado por el cliente)
     if (systemConfig?.restrictedGuardrail) {
       const { terms, reply: restrictedReply, actionRequired, intent, urgency } = systemConfig.restrictedGuardrail;
-      const priceTerms = ['precio', 'costo', 'arancel', 'cuanto cobra', 'cuánto cobra', 'cuanto sale', 'cuánto sale', 'valor'];
-      const isPriceQuery = priceTerms.some(term => lowerMsg.includes(term));
-      
-      const asksRestricted = terms.some(term => {
-        const lowerTerm = term.toLowerCase();
-        // Si el término restringido es 'receta', solo bloquea si no es pregunta de arancel/precio
-        if (lowerTerm === 'receta' && isPriceQuery) return false;
-        return lowerMsg.includes(lowerTerm);
-      });
-
+      const asksRestricted = terms.some(term => lowerMsg.includes(term.toLowerCase()));
       if (asksRestricted) {
         return reply.status(200).send({
-          intent: intent || 'RESTRINGIDO',
-          confidence: 0.95,
+          intent: intent || 'ESCALATE_HUMAN',
+          confidence: 0.99,
           actionRequired: actionRequired || 'ESCALATE_HUMAN',
-          entities: {
-            doctorName: null,
-            preferredShift: 'indistinto',
-            urgency: urgency || 'baja'
-          },
+          entities: { urgency },
           suggestedReply: restrictedReply,
           ragSources: [],
-          latencyMs: 15
+          latencyMs: 0
         });
       }
     }
@@ -191,29 +172,38 @@ export function buildApp() {
     const result = await aiService.processMessage(
       parseResult.data.tenantId,
       message,
-      clinicContext,
+      businessContext,
       parseResult.data.conversationHistory,
       parseResult.data.toolResult,
       systemConfig
     );
 
+    // Sin motor de inferencia disponible: el cliente decide la contingencia
+    if ('ok' in result && (result as InferenceUnavailable).ok === false) {
+      const unavailable = result as InferenceUnavailable;
+      metricsService.recordAIUsage('inference-unavailable', message, '');
+      return reply.status(200).send(unavailable);
+    }
+
+    const analysis = result as AIAnalysisResult;
+
     // Registro de consumo de tokens y motor en observabilidad
     metricsService.recordAIUsage(
-      result.engineUsed || 'system-contingency',
+      analysis.engineUsed || 'unknown',
       message,
-      result.suggestedReply
+      analysis.suggestedReply
     );
 
     return reply.status(200).send({
-      intent: result.intent,
-      confidence: result.confidence,
-      actionRequired: result.actionRequired,
-      toolCall: result.toolCall,
-      entities: result.entities,
-      suggestedReply: result.suggestedReply,
-      ragSources: result.ragSources,
-      latencyMs: result.latencyMs,
-      engineUsed: result.engineUsed
+      intent: analysis.intent,
+      confidence: analysis.confidence,
+      actionRequired: analysis.actionRequired,
+      toolCall: analysis.toolCall,
+      entities: analysis.entities,
+      suggestedReply: analysis.suggestedReply,
+      ragSources: analysis.ragSources,
+      latencyMs: analysis.latencyMs,
+      engineUsed: analysis.engineUsed
     });
   });
 
