@@ -199,7 +199,7 @@ export function buildApp() {
 
     // Registro de consumo de tokens y motor en observabilidad
     metricsService.recordAIUsage(
-      result.engineUsed || 'deterministic-fallback',
+      result.engineUsed || 'system-contingency',
       message,
       result.suggestedReply
     );

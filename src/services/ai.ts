@@ -1,27 +1,24 @@
-import { GoogleGenAI, Type } from '@google/genai';
+import { GoogleGenAI } from '@google/genai';
 import { dbInstance } from '../db.js';
 
 export interface AIAnalysisResult {
-  intent: 'SOLICITUD_TURNO' | 'CONSULTA_ARANCEL' | 'CANCELACION_REPROGRAMACION' | 'INFORMACION_HORARIOS' | 'OTRO';
+  intent: string;
   confidence: number;
   actionRequired: 'REPLY_ONLY' | 'CREATE_PENDING_BOOKING' | 'ESCALATE_HUMAN' | 'CALL_TOOL';
   toolCall?: {
-    tool: 'getDoctorSchedule' | 'getDoctorAvailability';
-    params: {
-      doctorId?: number;
-      doctorName?: string;
-      date?: string;
-    };
+    tool: string;
+    params: Record<string, any>;
   };
   entities: {
-    doctorName: string | null;
-    preferredShift: 'manana' | 'tarde' | 'indistinto';
-    urgency: 'baja' | 'media' | 'alta';
+    doctorName?: string | null;
+    preferredShift?: 'manana' | 'tarde' | 'indistinto';
+    urgency?: 'baja' | 'media' | 'alta';
+    [key: string]: any;
   };
   suggestedReply: string;
   ragSources: string[];
   latencyMs: number;
-  engineUsed?: 'ollama-qwen2.5:3b' | 'gemini-2.5-flash' | 'gemini-3.5-flash-lite' | 'deterministic-fallback';
+  engineUsed?: 'ollama-qwen2.5:3b' | 'gemini-2.5-flash' | 'gemini-3.5-flash-lite' | 'system-contingency';
 }
 
 export interface SystemConfig {
@@ -194,7 +191,7 @@ export class AIService {
       // Ollama falló o no respondió
     }
 
-    // Si fallan ambos motores sin conexión
+    // 5. Contingencia sin conexión: respuesta limpia sin asumir doctores ni reglas fijas
     return {
       intent: 'OTRO',
       confidence: 0.5,
@@ -203,7 +200,7 @@ export class AIService {
       suggestedReply: 'En este momento estamos experimentando una interrupción técnica. La administración revisará tu mensaje a la brevedad.',
       ragSources: relevantChunks.map(c => c.title),
       latencyMs: Date.now() - start,
-      engineUsed: 'gemini-3.5-flash-lite'
+      engineUsed: 'system-contingency'
     };
   }
 
@@ -266,98 +263,6 @@ export class AIService {
       console.warn('[edi3-ai-production] Gemini call failed:', err.message);
       return null;
     }
-  }
-
-  private deterministicFallback(
-    message: string,
-    clinicContext: any,
-    relevantChunks: any[],
-    elapsedMs: number,
-    conversationHistory?: any[]
-  ): AIAnalysisResult {
-    const lowerMsg = message.toLowerCase();
-
-    // Análisis de historial para correferencias ("con ella", "con el", "confirmo ese")
-    let historyDoctor: string | null = null;
-    let historyPrefersFemale = lowerMsg.includes('ella');
-    let historyPrefersMale = lowerMsg.includes('con el') || lowerMsg.includes('con él');
-
-    if (conversationHistory && conversationHistory.length > 0) {
-      const fullHistoryText = conversationHistory.map(h => h.content).join(' ').toLowerCase();
-      if (clinicContext?.doctors) {
-        for (const doc of clinicContext.doctors) {
-          const docLower = doc.name.toLowerCase();
-          if (fullHistoryText.includes(docLower)) {
-            if (historyPrefersFemale && (docLower.includes('dra') || docLower.includes('dra.'))) {
-              historyDoctor = doc.name;
-              break;
-            } else if (historyPrefersMale && (docLower.includes('dr.') || docLower.includes('dr '))) {
-              historyDoctor = doc.name;
-              break;
-            } else if (!historyDoctor) {
-              historyDoctor = doc.name;
-            }
-          }
-        }
-      }
-    }
-
-    // Turno
-    const isBooking = lowerMsg.includes('turno') || lowerMsg.includes('cita') || lowerMsg.includes('consulta')
-      || lowerMsg.includes('ella') || lowerMsg.includes('confirmo') || lowerMsg.includes('viene bien')
-      || lowerMsg.includes('quedamos');
-
-    if (isBooking) {
-      const isMadrugada = lowerMsg.includes('madrugada') || lowerMsg.includes('3:30');
-      const shift = lowerMsg.includes('tarde') ? 'tarde' :
-                    (lowerMsg.includes('mañana') || lowerMsg.includes('manana')) ? 'manana' : 'indistinto';
-
-      let matchedDoctor: string | null = null;
-      if (clinicContext?.doctors) {
-        for (const doc of clinicContext.doctors) {
-          const parts = doc.name.toLowerCase().split(' ');
-          if (parts.some((p: string) => p.length > 2 && lowerMsg.includes(p))) {
-            matchedDoctor = doc.name;
-            break;
-          }
-        }
-      }
-
-      const finalDoctor = matchedDoctor || historyDoctor || (clinicContext?.doctors?.[0]?.name ?? 'Profesional de cabecera');
-
-      return {
-        intent: 'SOLICITUD_TURNO',
-        confidence: 0.94,
-        actionRequired: isMadrugada ? 'REPLY_ONLY' : 'CREATE_PENDING_BOOKING',
-        entities: {
-          doctorName: finalDoctor,
-          preferredShift: shift,
-          urgency: 'baja'
-        },
-        suggestedReply: isMadrugada
-          ? 'Hola. Los turnos de atención se brindan exclusivamente en horario hábil diurno.'
-          : `Hola! Registramos tu solicitud para consultar turnos disponibles con ${finalDoctor}. La secretaría revisará la agenda y te enviará la confirmación definitiva a la brevedad.`,
-        ragSources: relevantChunks.length > 0 ? relevantChunks.map(c => c.title) : ['atencion_y_modalidades.md'],
-        latencyMs: elapsedMs,
-        engineUsed: 'deterministic-fallback'
-      };
-    }
-
-    // Consulta general / horarios
-    return {
-      intent: 'INFORMACION_HORARIOS',
-      confidence: 0.88,
-      actionRequired: 'REPLY_ONLY',
-      entities: {
-        doctorName: null,
-        preferredShift: 'indistinto',
-        urgency: 'baja'
-      },
-      suggestedReply: `Hola! Gracias por comunicarte con ${clinicContext?.clinicName || 'nuestro consultorio'}. Nuestro horario de secretaría es ${clinicContext?.secretaryHours || 'habitual'}. ¿En qué podemos ayudarte?`,
-      ragSources: relevantChunks.length > 0 ? relevantChunks.map(c => c.title) : ['atencion_y_modalidades.md'],
-      latencyMs: elapsedMs,
-      engineUsed: 'deterministic-fallback'
-    };
   }
 }
 
