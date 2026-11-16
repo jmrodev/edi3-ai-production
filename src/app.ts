@@ -133,96 +133,68 @@ export function buildApp() {
       });
     }
 
-    // Invariante 2: Triage de Emergencia Vital
-    const urgentTerms = ['pecho', 'infarto', 'respirar', 'aire', 'desmayo', 'asfixia', 'coronario'];
-    const isUrgent = urgentTerms.some(term => lowerMsg.includes(term));
-    if (isUrgent) {
-      return reply.status(200).send({
-        intent: 'OTRO',
-        confidence: 0.99,
-        actionRequired: 'ESCALATE_HUMAN',
-        entities: {
-          doctorName: null,
-          preferredShift: 'indistinto',
-          urgency: 'alta'
-        },
-        suggestedReply: '⚠️ Por los síntomas que describes, te recomendamos acudir de inmediato a la guardia médica más cercana o comunicarte con el servicio de emergencias médicas (107 / 911). La secretaría ha sido notificada.',
-        ragSources: [],
-        latencyMs: 12
-      });
-    }
+    // 1. Guardrails Rápidos basados en systemConfig provisto por el cliente
+    const systemConfig = parseResult.data.systemConfig;
 
-    // Precios y Aranceles
-    const priceTerms = ['precio', 'costo', 'arancel', 'cuanto cobra', 'cuánto cobra', 'cuanto sale', 'cuánto sale', 'valor'];
-    const isPriceQuery = priceTerms.some(term => lowerMsg.includes(term));
-
-    // Invariante 3: Prescripción Cero (Psicofármacos y solicitud de emisión de recetas)
-    // Solo bloquea si NO es una consulta informativa de arancel/precio de receta
-    const medTerms = ['clonazepam', 'rivotril', 'medicamento', 'farmaco', 'ansiolitico', 'morfina'];
-    const asksControlledMed = medTerms.some(term => lowerMsg.includes(term));
-    const asksPrescriptionIssue = lowerMsg.includes('receta') && !isPriceQuery;
-
-    if (asksControlledMed || asksPrescriptionIssue) {
-      return reply.status(200).send({
-        intent: 'OTRO',
-        confidence: 0.95,
-        actionRequired: 'ESCALATE_HUMAN',
-        entities: {
-          doctorName: null,
-          preferredShift: 'indistinto',
-          urgency: 'baja'
-        },
-        suggestedReply: 'Hola. Te recordamos que la emisión o renovación de recetas médicas requiere evaluación médica presencial o consulta programada. No se emiten recetas automáticas por WhatsApp.',
-        ragSources: ['recetas_y_tramites.md'],
-        latencyMs: 15
-      });
-    }
-
-    // Invariante 4: Solicitud de Turno (excluyendo consultas de precio/arancel)
-
-    const bookingTerms = ['turno', 'cita', 'atender', 'consulta'];
-    const isBooking = !isPriceQuery && bookingTerms.some(term => lowerMsg.includes(term));
-    if (isBooking) {
-      // Verificar si hay doctor con ese nombre
-      let matchedDoctor: string | null = null;
-      if (clinicContext?.doctors) {
-        for (const doc of clinicContext.doctors) {
-          const docParts = doc.name.toLowerCase().split(' ');
-          if (docParts.some(part => part.length > 3 && lowerMsg.includes(part))) {
-            matchedDoctor = doc.name;
-            break;
-          }
-        }
+    // Guardrail de Emergencia (Parametrizado por el cliente)
+    if (systemConfig?.emergencyGuardrail) {
+      const { terms, reply: emergencyReply, actionRequired, intent, urgency } = systemConfig.emergencyGuardrail;
+      const isEmergency = terms.some(term => lowerMsg.includes(term.toLowerCase()));
+      if (isEmergency) {
+        return reply.status(200).send({
+          intent: intent || 'EMERGENCIA',
+          confidence: 0.99,
+          actionRequired: actionRequired || 'ESCALATE_HUMAN',
+          entities: {
+            doctorName: null,
+            preferredShift: 'indistinto',
+            urgency: urgency || 'alta'
+          },
+          suggestedReply: emergencyReply,
+          ragSources: [],
+          latencyMs: 12
+        });
       }
-
-      const isMadrugada = lowerMsg.includes('madrugada') || lowerMsg.includes('3:30');
-      const shift = lowerMsg.includes('tarde') ? 'tarde' :
-                    lowerMsg.includes('mañana') ? 'manana' : 'indistinto';
-
-      return reply.status(200).send({
-        intent: 'SOLICITUD_TURNO',
-        confidence: 0.94,
-        actionRequired: isMadrugada ? 'REPLY_ONLY' : 'CREATE_PENDING_BOOKING',
-        entities: {
-          doctorName: matchedDoctor || (clinicContext?.doctors?.[0]?.name ?? 'Profesional de cabecera'),
-          preferredShift: shift,
-          urgency: 'baja'
-        },
-        suggestedReply: isMadrugada
-          ? 'Hola. Los turnos de atención se brindan exclusivamente en horario hábil diurno.'
-          : `Hola! Registramos tu solicitud para consultar turnos disponibles${matchedDoctor ? ` con ${matchedDoctor}` : ''}. La secretaría revisará la agenda y te enviará la confirmación definitiva a la brevedad.`,
-        ragSources: ['atencion_y_modalidades.md'],
-        latencyMs: 20
-      });
     }
 
-    // Procesamiento con IA Cascada (Gemini Flash Lite -> Ollama Local -> Deterministic Fallback)
+    // Guardrail de Términos Restringidos / Políticas Prohibidas (Parametrizado por el cliente)
+    if (systemConfig?.restrictedGuardrail) {
+      const { terms, reply: restrictedReply, actionRequired, intent, urgency } = systemConfig.restrictedGuardrail;
+      const priceTerms = ['precio', 'costo', 'arancel', 'cuanto cobra', 'cuánto cobra', 'cuanto sale', 'cuánto sale', 'valor'];
+      const isPriceQuery = priceTerms.some(term => lowerMsg.includes(term));
+      
+      const asksRestricted = terms.some(term => {
+        const lowerTerm = term.toLowerCase();
+        // Si el término restringido es 'receta', solo bloquea si no es pregunta de arancel/precio
+        if (lowerTerm === 'receta' && isPriceQuery) return false;
+        return lowerMsg.includes(lowerTerm);
+      });
+
+      if (asksRestricted) {
+        return reply.status(200).send({
+          intent: intent || 'RESTRINGIDO',
+          confidence: 0.95,
+          actionRequired: actionRequired || 'ESCALATE_HUMAN',
+          entities: {
+            doctorName: null,
+            preferredShift: 'indistinto',
+            urgency: urgency || 'baja'
+          },
+          suggestedReply: restrictedReply,
+          ragSources: [],
+          latencyMs: 15
+        });
+      }
+    }
+
+    // Procesamiento con IA Cascada (Gemini Flash Lite -> Ollama Local)
     const result = await aiService.processMessage(
       parseResult.data.tenantId,
       message,
       clinicContext,
       parseResult.data.conversationHistory,
-      parseResult.data.toolResult
+      parseResult.data.toolResult,
+      systemConfig
     );
 
     // Registro de consumo de tokens y motor en observabilidad

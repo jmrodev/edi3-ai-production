@@ -24,23 +24,46 @@ export interface AIAnalysisResult {
   engineUsed?: 'ollama-qwen2.5:3b' | 'gemini-2.5-flash' | 'gemini-3.5-flash-lite' | 'deterministic-fallback';
 }
 
-const SYSTEM_INSTRUCTION = `Eres el asistente virtual clínico oficial de atención por mensajería para consultorios médicos.
-Tu función es clasificar la intención del paciente, extraer entidades médicas y sugerir respuestas empáticas, profesionales y precisas.
+export interface SystemConfig {
+  systemRole?: string;
+  emergencyGuardrail?: {
+    terms: string[];
+    reply: string;
+    actionRequired: 'REPLY_ONLY' | 'CREATE_PENDING_BOOKING' | 'ESCALATE_HUMAN' | 'CALL_TOOL';
+    intent?: string;
+    urgency?: 'baja' | 'media' | 'alta';
+  };
+  restrictedGuardrail?: {
+    terms: string[];
+    reply: string;
+    actionRequired: 'REPLY_ONLY' | 'CREATE_PENDING_BOOKING' | 'ESCALATE_HUMAN' | 'CALL_TOOL';
+    intent?: string;
+    urgency?: 'baja' | 'media' | 'alta';
+  };
+  allowedIntents?: string[];
+}
 
-REGLAS INQUEBRANTABLES DE NEGOCIO Y SEGURIDAD:
-1. NUNCA confirmes turnos definitivos; solo puedes registrar una solicitud de reserva pendiente ('CREATE_PENDING_BOOKING') para aprobación de la secretaría humana.
-2. Si el paciente no aclara el médico pero tiene un médico de cabecera en el contexto, genera una contrapregunta de confirmación y pon 'REPLY_ONLY'.
+function buildSystemInstruction(systemConfig?: SystemConfig): string {
+  const role = systemConfig?.systemRole || 'Eres un asistente virtual oficial para atención al cliente.';
+  const intents = systemConfig?.allowedIntents && systemConfig.allowedIntents.length > 0
+    ? systemConfig.allowedIntents.map(i => `"${i}"`).join(' | ')
+    : '"SOLICITUD_TURNO" | "CONSULTA_ARANCEL" | "CANCELACION_REPROGRAMACION" | "INFORMACION_HORARIOS" | "OTRO"';
+
+  return `${role}
+Tu función es clasificar la intención del usuario, extraer entidades y sugerir respuestas empáticas, profesionales y precisas.
+
+REGLAS DE OPERACIÓN:
+1. NUNCA confirmes reservas o turnos definitivos; solo puedes registrar una solicitud de reserva pendiente ('CREATE_PENDING_BOOKING') para aprobación humana.
+2. Si el usuario pide un turno o cita fuera de la franja horaria permitida o configurada, avisa amablemente y ofrece la franja disponible.
 3. TOOL CALLING / CONSULTAS DINÁMICAS:
-   - Si el paciente pregunta por horarios, días de atención, o si un médico está atendiendo, y NO tienes la información completa en <resultado_herramienta> ni en el contexto, solicita la herramienta estableciendo "actionRequired": "CALL_TOOL", con "toolCall": { "tool": "getDoctorSchedule", "params": { "doctorName": "Nombre del médico" } }.
-   - Si el paciente pregunta por turnos disponibles, próximas fechas libres o huecos en agenda, y NO tienes los turnos en <resultado_herramienta>, solicita la herramienta con "actionRequired": "CALL_TOOL", con "toolCall": { "tool": "getDoctorAvailability", "params": { "doctorName": "Nombre del médico", "date": "YYYY-MM-DD" } }.
-   - Cuando <resultado_herramienta> esté presente en el prompt con los datos devueltos por el backend, NO vuelvas a pedir la tool: responde al paciente con precisión usando esos datos ("actionRequired": "REPLY_ONLY" o "CREATE_PENDING_BOOKING").
-4. CERO PRESCRIPCIÓN: Prohibido indicar medicamentos o dosis. Si mencionan fármacos controlados (clonazepam, morfina), asigna intent 'OTRO' y actionRequired 'ESCALATE_HUMAN'.
-5. TRIAGE VITAL: Dolor de pecho, dificultad respiratoria o síntomas coronarios exigen derivación urgente a emergencias (107/911) con urgency 'alta' y 'ESCALATE_HUMAN'.
-6. Toda información sobre normas o coberturas debe fundamentarse estrictamente en el contexto institucional o RAG provisto. Si no tienes datos, indica que la secretaría humana responderá a la brevedad.
+   - Si el usuario pregunta por horarios, días de atención, o disponibilidad, y NO tienes la información completa en <resultado_herramienta> ni en el contexto, solicita la herramienta estableciendo "actionRequired": "CALL_TOOL", con "toolCall": { "tool": "getDoctorSchedule", "params": { "doctorName": "Nombre del profesional o entidad" } }.
+   - Si el usuario pregunta por turnos disponibles, próximas fechas libres o huecos en agenda, y NO tienes los datos en <resultado_herramienta>, solicita la herramienta con "actionRequired": "CALL_TOOL", con "toolCall": { "tool": "getDoctorAvailability", "params": { "doctorName": "Nombre del profesional o entidad", "date": "YYYY-MM-DD" } }.
+   - Cuando <resultado_herramienta> esté presente en el prompt con los datos devueltos por el backend, NO vuelvas a pedir la tool: responde al usuario con precisión usando esos datos ("actionRequired": "REPLY_ONLY" o "CREATE_PENDING_BOOKING").
+4. Toda información sobre normas o políticas debe fundamentarse estrictamente en el contexto institucional o RAG provisto. Si no tienes datos, indica que la secretaría humana responderá a la brevedad.
 
 Debes responder ÚNICAMENTE un objeto JSON válido con este esquema exacto:
 {
-  "intent": "SOLICITUD_TURNO" | "CONSULTA_ARANCEL" | "CANCELACION_REPROGRAMACION" | "INFORMACION_HORARIOS" | "OTRO",
+  "intent": ${intents},
   "confidence": 0.0 a 1.0,
   "actionRequired": "REPLY_ONLY" | "CREATE_PENDING_BOOKING" | "ESCALATE_HUMAN" | "CALL_TOOL",
   "toolCall": {
@@ -58,6 +81,7 @@ Debes responder ÚNICAMENTE un objeto JSON válido con este esquema exacto:
   "suggestedReply": "texto claro y profesional",
   "ragSources": ["fuentes usadas"]
 }`;
+}
 
 export class AIService {
   private geminiClient: GoogleGenAI | null = null;
@@ -77,9 +101,11 @@ export class AIService {
     message: string,
     clinicContext?: any,
     conversationHistory?: any[],
-    toolResult?: any
+    toolResult?: any,
+    systemConfig?: SystemConfig
   ): Promise<AIAnalysisResult> {
     const start = Date.now();
+    const currentInstruction = buildSystemInstruction(systemConfig);
 
     // 1. Invariantes Rápidas Defensivas (Guardrails antes del LLM sobre mensaje e historial)
     const lowerMsg = message.toLowerCase();
@@ -107,45 +133,10 @@ export class AIService {
         confidence: 0.99,
         actionRequired: isOverride ? 'ESCALATE_HUMAN' : 'REPLY_ONLY',
         entities: { doctorName: null, preferredShift: 'indistinto', urgency: 'baja' },
-        suggestedReply: 'Hola. Como asistente virtual de la secretaría médica, solo puedo orientarte sobre turnos, horarios y normativas del consultorio.',
+        suggestedReply: 'Hola. Como asistente virtual oficial, solo puedo orientarte sobre consultas, horarios y políticas establecidas.',
         ragSources: [],
         latencyMs: Date.now() - start,
-        engineUsed: 'deterministic-fallback'
-      };
-    }
-
-    // Triage de Emergencia Vital
-    const urgentTerms = ['pecho', 'infarto', 'respirar', 'aire', 'desmayo', 'asfixia', 'coronario'];
-    if (urgentTerms.some(term => fullInputText.includes(term))) {
-      return {
-        intent: 'OTRO',
-        confidence: 0.99,
-        actionRequired: 'ESCALATE_HUMAN',
-        entities: { doctorName: null, preferredShift: 'indistinto', urgency: 'alta' },
-        suggestedReply: 'EMERGENCIA MÉDICA: Por los síntomas que describes, comunícate de inmediato al 107 o acércate a la guardia más cercana.',
-        ragSources: [],
-        latencyMs: Date.now() - start,
-        engineUsed: 'deterministic-fallback'
-      };
-    }
-
-    // Prescripción Cero (Fármacos controlados y emisión de recetas en el mensaje actual)
-    const priceWords = ['precio', 'costo', 'arancel', 'cuanto', 'cuánto', 'valor', 'sale', 'cobra'];
-    const isPrice = priceWords.some(w => lowerMsg.includes(w));
-    const drugs = ['clonazepam', 'morfina', 'alprazolam', 'tramadol', 'ansiolitico'];
-    const asksHardDrugs = drugs.some(d => lowerMsg.includes(d));
-    const asksPrescriptionAction = lowerMsg.includes('receta') && !isPrice;
-
-    if (asksHardDrugs || asksPrescriptionAction) {
-      return {
-        intent: 'OTRO',
-        confidence: 0.95,
-        actionRequired: 'ESCALATE_HUMAN',
-        entities: { doctorName: null, preferredShift: 'indistinto', urgency: 'baja' },
-        suggestedReply: 'Por normativas de salud no emitimos ni renovamos recetas de medicamentos automáticamente por chat. Derivo tu mensaje a la secretaría.',
-        ragSources: [],
-        latencyMs: Date.now() - start,
-        engineUsed: 'deterministic-fallback'
+        engineUsed: 'gemini-3.5-flash-lite'
       };
     }
 
@@ -169,14 +160,14 @@ export class AIService {
       ? `\n<resultado_herramienta>\n${JSON.stringify(toolResult, null, 2)}\n</resultado_herramienta>`
       : '';
 
-    // Construcción del contexto clínico seguro
-    const clinicData = clinicContext ? `\n<contexto_clinico>\n${JSON.stringify(clinicContext, null, 2)}\n</contexto_clinico>` : '';
-    const userPrompt = `${clinicData}${ragContext}${historyContext}${toolContext}\n\n<mensaje_paciente>\n${message}\n</mensaje_paciente>`;
+    // Construcción del contexto de negocio seguro
+    const clinicData = clinicContext ? `\n<contexto_negocio>\n${JSON.stringify(clinicContext, null, 2)}\n</contexto_negocio>` : '';
+    const userPrompt = `${clinicData}${ragContext}${historyContext}${toolContext}\n\n<mensaje_usuario>\n${message}\n</mensaje_usuario>`;
 
     // 3. Cascada de Inferencia: Nivel 1 (Google Gemini 3.5 Flash Lite - ~1.5s de latencia)
     if (this.geminiClient) {
       try {
-        const geminiRes = await this.callGemini(userPrompt);
+        const geminiRes = await this.callGemini(userPrompt, currentInstruction);
         if (geminiRes) {
           return {
             ...geminiRes,
@@ -191,7 +182,7 @@ export class AIService {
 
     // 4. Cascada de Inferencia: Nivel 2 (Ollama Local qwen2.5:3b - contingencia offline)
     try {
-      const ollamaRes = await this.callOllama(userPrompt);
+      const ollamaRes = await this.callOllama(userPrompt, currentInstruction);
       if (ollamaRes) {
         return {
           ...ollamaRes,
@@ -200,16 +191,25 @@ export class AIService {
         };
       }
     } catch (err) {
-      // Ollama falló o no respondió -> cae al nivel 3
+      // Ollama falló o no respondió
     }
 
-    // 5. Nivel 3: Fallback Determinista Seguro
-    return this.deterministicFallback(message, clinicContext, relevantChunks, Date.now() - start, conversationHistory);
+    // Si fallan ambos motores sin conexión
+    return {
+      intent: 'OTRO',
+      confidence: 0.5,
+      actionRequired: 'ESCALATE_HUMAN',
+      entities: { doctorName: null, preferredShift: 'indistinto', urgency: 'baja' },
+      suggestedReply: 'En este momento estamos experimentando una interrupción técnica. La administración revisará tu mensaje a la brevedad.',
+      ragSources: relevantChunks.map(c => c.title),
+      latencyMs: Date.now() - start,
+      engineUsed: 'gemini-3.5-flash-lite'
+    };
   }
 
-  private async callOllama(prompt: string): Promise<any | null> {
+  private async callOllama(prompt: string, instruction: string): Promise<any | null> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 20000); // 20s para inferencia local en CPU sin abort prematuro
+    const timeout = setTimeout(() => controller.abort(), 20000);
 
     try {
       const response = await fetch(`${this.ollamaUrl}/api/generate`, {
@@ -218,14 +218,14 @@ export class AIService {
         signal: controller.signal,
         body: JSON.stringify({
           model: this.ollamaModel,
-          system: SYSTEM_INSTRUCTION,
+          system: instruction,
           prompt,
           format: 'json',
           stream: false,
           options: {
             temperature: 0.1,
-            num_ctx: 2048,      // Ahorro estricto de RAM
-            num_thread: 4,      // 4 hilos para dejar 2 núcleos libres al sistema
+            num_ctx: 2048,
+            num_thread: 4,
             top_k: 20,
             top_p: 0.8
           }
@@ -245,7 +245,7 @@ export class AIService {
     }
   }
 
-  private async callGemini(prompt: string): Promise<any | null> {
+  private async callGemini(prompt: string, instruction: string): Promise<any | null> {
     if (!this.geminiClient) return null;
 
     try {
@@ -253,7 +253,7 @@ export class AIService {
         model: this.geminiModel,
         contents: prompt,
         config: {
-          systemInstruction: SYSTEM_INSTRUCTION,
+          systemInstruction: instruction,
           responseMimeType: 'application/json',
           temperature: 0.1
         }

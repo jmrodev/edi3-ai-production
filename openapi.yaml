@@ -133,6 +133,42 @@ components:
           minLength: 1
           maxLength: 1000
           example: "Hola, quisiera saber cuánto cuesta la consulta con la Dra. Scheerle y qué días atiende."
+        systemConfig:
+          type: object
+          additionalProperties: false
+          properties:
+            systemRole:
+              type: string
+            emergencyGuardrail:
+              type: object
+              required: [terms, reply, actionRequired]
+              properties:
+                terms:
+                  type: array
+                  items:
+                    type: string
+                reply:
+                  type: string
+                actionRequired:
+                  type: string
+                  enum: [REPLY_ONLY, CREATE_PENDING_BOOKING, ESCALATE_HUMAN, CALL_TOOL]
+            restrictedGuardrail:
+              type: object
+              required: [terms, reply, actionRequired]
+              properties:
+                terms:
+                  type: array
+                  items:
+                    type: string
+                reply:
+                  type: string
+                actionRequired:
+                  type: string
+                  enum: [REPLY_ONLY, CREATE_PENDING_BOOKING, ESCALATE_HUMAN, CALL_TOOL]
+            allowedIntents:
+              type: array
+              items:
+                type: string
         clinicContext:
           type: object
           additionalProperties: false
