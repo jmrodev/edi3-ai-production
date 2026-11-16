@@ -109,8 +109,8 @@ flowchart TD
 ### Fase 4: Implementación Segura (Builder + `run-workflow` / `swarm`)
 - Arquitectura desacoplada en TypeScript (Fastify + Zod).
 - **Validación en la frontera:** Middleware Zod `.strict()` descartando cualquier payload malformado antes de invocar el LLM.
-- **Function Calling / Tools:** La IA no responde texto libre; invoca herramientas tipadas (`consultar_disponibilidad`, `consultar_aranceles`, `consultar_normativa_rag`, `solicitar_reserva`).
-- **Contexto Vivo:** Consume datos de MySQL en `clinicContext` en vez de quemar aranceles o feriados en prompts fijos.
+- **Function Calling / Tools:** La IA no responde texto libre; solicita solo las herramientas que el cliente declara en `systemConfig.availableTools` (ej. `getDoctorSchedule`, `getDoctorAvailability`) y el backend las ejecuta.
+- **Contexto Vivo:** Consume el contexto genérico `businessContext` provisto por el cliente (institución, médicos, aranceles, normativa) en vez de quemar datos de dominio o prompts fijos.
 - **RAG Dinámico por API:** Almacenamiento vectorial en SQLite (`sqlite-vec`) filtrado estrictamente por `tenantId`.
 - **`run-workflow` & `swarm` / `swarm_monitor`:** Si una tarea requiere paralelismo de subagentes (ej. indexación masiva o autorías separadas), se orquesta mediante el swarm coordinado.
 

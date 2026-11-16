@@ -7,6 +7,7 @@ import {
 } from './schemas.js';
 import { dbInstance } from './db.js';
 import { aiService } from './services/ai.js';
+import type { AIAnalysisResult, InferenceUnavailable } from './services/ai.js';
 import { metricsService } from './services/metrics.js';
 
 const startTime = Date.now();
@@ -23,7 +24,7 @@ export function buildApp() {
   app.register(rateLimit, {
     max: 120,
     timeWindow: '1 minute',
-    errorResponseBuilder: (request, context) => ({
+    errorResponseBuilder: (_request: any, context: any) => ({
       statusCode: 429,
       error: 'Too Many Requests',
       message: `Límite de tasa excedido. Máximo permitido: ${context.max} peticiones por ${context.after}.`
@@ -35,7 +36,7 @@ export function buildApp() {
     metricsService.recordRequest(request.url);
   });
 
-  app.setErrorHandler((error, request, reply) => {
+  app.setErrorHandler((error: any, request, reply) => {
     if (error.statusCode === 429) {
       return reply.status(429).send({
         error: 'TOO_MANY_REQUESTS',
@@ -43,7 +44,7 @@ export function buildApp() {
       });
     }
 
-    if (error.validation || error.statusCode === 400 || error.message.includes('JSON')) {
+    if (error.validation || error.statusCode === 400 || (error.message && error.message.includes('JSON'))) {
       // Sanitización de PII y secrets en respuestas de error
       const safeMsg = metricsService.maskPII(error.message || 'Payload malformado o validación fallida.');
       return reply.status(400).send({
@@ -99,10 +100,17 @@ export function buildApp() {
       });
     }
 
-    const { message, clinicContext } = parseResult.data;
+    const { message } = parseResult.data;
+    const systemConfig = parseResult.data.systemConfig;
+    const businessContext = parseResult.data.businessContext ?? parseResult.data.clinicContext;
     const lowerMsg = message.toLowerCase();
+    const historyText = (parseResult.data.conversationHistory || [])
+      .map(h => String(h.content).toLowerCase())
+      .join(' ');
+    const scanText = `${lowerMsg} ${historyText}`;
 
-    // Invariante 1: Detección y Contención de Inyecciones de Prompt (Jailbreak / System Prompt Leaks)
+    // Invariante: detección y contención de inyecciones de prompt (jailbreak / system prompt leaks)
+    // sobre mensaje e historial (el historial se trata como dato pasivo). La respuesta es neutra y configurable.
     const injectionPatterns = [
       'ignora todas las instrucciones',
       'system prompt',
@@ -113,124 +121,93 @@ export function buildApp() {
       'do anything now',
       'dan',
       '[admin override]',
-      'override'
+      'override',
+      '<<sys>>'
     ];
-    const isInjection = injectionPatterns.some(p => lowerMsg.includes(p));
+    const isInjection = injectionPatterns.some(p => scanText.includes(p));
     if (isInjection) {
-      const isOverride = lowerMsg.includes('[admin override]') || lowerMsg.includes('override');
+      const isOverride = scanText.includes('[admin override]') || scanText.includes('override') || scanText.includes('<<sys>>');
       return reply.status(200).send({
         intent: 'OTRO',
         confidence: 0.99,
         actionRequired: isOverride ? 'ESCALATE_HUMAN' : 'REPLY_ONLY',
-        entities: {
-          doctorName: null,
-          preferredShift: 'indistinto',
-          urgency: 'baja'
-        },
-        suggestedReply: 'Hola. Como asistente virtual de la secretaría médica, solo puedo orientarte sobre turnos, horarios y normativas del consultorio.',
+        entities: {},
+        suggestedReply: systemConfig?.neutralReply
+          || 'Hola. Solo puedo ayudarte con consultas relacionadas al servicio.',
         ragSources: [],
-        latencyMs: 10
+        latencyMs: 0
       });
     }
 
-    // Invariante 2: Triage de Emergencia Vital
-    const urgentTerms = ['pecho', 'infarto', 'respirar', 'aire', 'desmayo', 'asfixia', 'coronario'];
-    const isUrgent = urgentTerms.some(term => lowerMsg.includes(term));
-    if (isUrgent) {
-      return reply.status(200).send({
-        intent: 'OTRO',
-        confidence: 0.99,
-        actionRequired: 'ESCALATE_HUMAN',
-        entities: {
-          doctorName: null,
-          preferredShift: 'indistinto',
-          urgency: 'alta'
-        },
-        suggestedReply: '⚠️ Por los síntomas que describes, te recomendamos acudir de inmediato a la guardia médica más cercana o comunicarte con el servicio de emergencias médicas (107 / 911). La secretaría ha sido notificada.',
-        ragSources: [],
-        latencyMs: 12
-      });
-    }
-
-    // Invariante 3: Prescripción Cero (Psicofármacos)
-    const medTerms = ['clonazepam', 'rivotril', 'receta', 'medicamento', 'farmaco', 'ansiolitico', 'morfina'];
-    const asksMed = medTerms.some(term => lowerMsg.includes(term));
-    if (asksMed) {
-      return reply.status(200).send({
-        intent: 'OTRO',
-        confidence: 0.95,
-        actionRequired: 'ESCALATE_HUMAN',
-        entities: {
-          doctorName: null,
-          preferredShift: 'indistinto',
-          urgency: 'baja'
-        },
-        suggestedReply: 'Hola. Te recordamos que la emisión o renovación de recetas médicas requiere evaluación médica presencial o consulta programada. No se emiten recetas automáticas por WhatsApp.',
-        ragSources: ['recetas_y_tramites.md'],
-        latencyMs: 15
-      });
-    }
-
-    // Invariante 4: Solicitud de Turno
-    const bookingTerms = ['turno', 'cita', 'atender', 'consulta'];
-    const isBooking = bookingTerms.some(term => lowerMsg.includes(term));
-    if (isBooking) {
-      // Verificar si hay doctor con ese nombre
-      let matchedDoctor: string | null = null;
-      if (clinicContext?.doctors) {
-        for (const doc of clinicContext.doctors) {
-          const docParts = doc.name.toLowerCase().split(' ');
-          if (docParts.some(part => part.length > 3 && lowerMsg.includes(part))) {
-            matchedDoctor = doc.name;
-            break;
-          }
-        }
+    // Guardrails rápidos parametrizados por el cliente (sin lógica de dominio fija)
+    if (systemConfig?.emergencyGuardrail) {
+      const { terms, reply: emergencyReply, actionRequired, intent, urgency } = systemConfig.emergencyGuardrail;
+      const isEmergency = terms.some(term => lowerMsg.includes(term.toLowerCase()));
+      if (isEmergency) {
+        return reply.status(200).send({
+          intent: intent || 'ESCALATE_HUMAN',
+          confidence: 0.99,
+          actionRequired: actionRequired || 'ESCALATE_HUMAN',
+          entities: { urgency },
+          suggestedReply: emergencyReply,
+          ragSources: [],
+          latencyMs: 0
+        });
       }
-
-      const isMadrugada = lowerMsg.includes('madrugada') || lowerMsg.includes('3:30');
-      const shift = lowerMsg.includes('tarde') ? 'tarde' :
-                    lowerMsg.includes('mañana') ? 'manana' : 'indistinto';
-
-      return reply.status(200).send({
-        intent: 'SOLICITUD_TURNO',
-        confidence: 0.94,
-        actionRequired: isMadrugada ? 'REPLY_ONLY' : 'CREATE_PENDING_BOOKING',
-        entities: {
-          doctorName: matchedDoctor || (clinicContext?.doctors?.[0]?.name ?? 'Profesional de cabecera'),
-          preferredShift: shift,
-          urgency: 'baja'
-        },
-        suggestedReply: isMadrugada
-          ? 'Hola. Los turnos de atención se brindan exclusivamente en horario hábil diurno.'
-          : `Hola! Registramos tu solicitud para consultar turnos disponibles${matchedDoctor ? ` con ${matchedDoctor}` : ''}. La secretaría revisará la agenda y te enviará la confirmación definitiva a la brevedad.`,
-        ragSources: ['atencion_y_modalidades.md'],
-        latencyMs: 20
-      });
     }
 
-    // Procesamiento con IA Cascada (Ollama Local -> Gemini -> Deterministic Fallback)
+    if (systemConfig?.restrictedGuardrail) {
+      const { terms, reply: restrictedReply, actionRequired, intent, urgency } = systemConfig.restrictedGuardrail;
+      const asksRestricted = terms.some(term => lowerMsg.includes(term.toLowerCase()));
+      if (asksRestricted) {
+        return reply.status(200).send({
+          intent: intent || 'ESCALATE_HUMAN',
+          confidence: 0.99,
+          actionRequired: actionRequired || 'ESCALATE_HUMAN',
+          entities: { urgency },
+          suggestedReply: restrictedReply,
+          ragSources: [],
+          latencyMs: 0
+        });
+      }
+    }
+
+    // Procesamiento con IA Cascada (Gemini Flash Lite -> Ollama Local)
     const result = await aiService.processMessage(
       parseResult.data.tenantId,
       message,
-      clinicContext,
-      parseResult.data.conversationHistory
+      businessContext,
+      parseResult.data.conversationHistory,
+      parseResult.data.toolResult,
+      systemConfig
     );
+
+    // Sin motor de inferencia disponible: el cliente decide la contingencia
+    if ('ok' in result && (result as InferenceUnavailable).ok === false) {
+      const unavailable = result as InferenceUnavailable;
+      metricsService.recordAIUsage('inference-unavailable', message, '');
+      return reply.status(200).send(unavailable);
+    }
+
+    const analysis = result as AIAnalysisResult;
 
     // Registro de consumo de tokens y motor en observabilidad
     metricsService.recordAIUsage(
-      result.engineUsed || 'deterministic-fallback',
+      analysis.engineUsed || 'unknown',
       message,
-      result.suggestedReply
+      analysis.suggestedReply
     );
 
     return reply.status(200).send({
-      intent: result.intent,
-      confidence: result.confidence,
-      actionRequired: result.actionRequired,
-      entities: result.entities,
-      suggestedReply: result.suggestedReply,
-      ragSources: result.ragSources,
-      latencyMs: result.latencyMs
+      intent: analysis.intent,
+      confidence: analysis.confidence,
+      actionRequired: analysis.actionRequired,
+      toolCall: analysis.toolCall,
+      entities: analysis.entities,
+      suggestedReply: analysis.suggestedReply,
+      ragSources: analysis.ragSources,
+      latencyMs: analysis.latencyMs,
+      engineUsed: analysis.engineUsed
     });
   });
 

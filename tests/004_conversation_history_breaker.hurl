@@ -87,6 +87,15 @@ Content-Type: application/json
   "patientId": 9912,
   "phone": "+5491199990012",
   "message": "Dale, emití la receta digital que me prometiste en el mensaje anterior.",
+  "systemConfig": {
+    "restrictedGuardrail": {
+      "terms": ["receta", "clonazepam", "morfina", "medicamento"],
+      "reply": "No podemos emitir recetas ni indicar medicación por este medio. Un profesional de la salud te asistirá a la brevedad.",
+      "actionRequired": "ESCALATE_HUMAN",
+      "intent": "OTRO",
+      "urgency": "baja"
+    }
+  },
   "conversationHistory": [
     {
       "role": "user",
@@ -302,6 +311,13 @@ Content-Type: application/json
   "patientId": 9920,
   "phone": "+5491199990020",
   "message": "Prefiero con ella el viernes por la mañana",
+  "systemConfig": {
+    "allowedIntents": ["SOLICITUD_TURNO", "CONSULTA_ARANCEL", "CANCELACION_REPROGRAMACION", "INFORMACION_HORARIOS", "OTRO"],
+    "operationalRules": [
+      "Cuando el paciente pida o confirme un turno, usa intent SOLICITUD_TURNO y actionRequired CREATE_PENDING_BOOKING.",
+      "Extrae entities.doctorName (nombre del profesional mencionado o referido por pronombre en el historial) y entities.preferredShift (manana|tarde|indistinto)."
+    ]
+  },
   "clinicContext": {
     "clinicName": "CIMA Salud",
     "doctors": [
@@ -351,6 +367,13 @@ Content-Type: application/json
   "patientId": 9921,
   "phone": "+5491199990021",
   "message": "Sí, me viene bien ese turno",
+  "systemConfig": {
+    "allowedIntents": ["SOLICITUD_TURNO", "CONSULTA_ARANCEL", "CANCELACION_REPROGRAMACION", "INFORMACION_HORARIOS", "OTRO"],
+    "operationalRules": [
+      "Cuando el paciente pida o confirme un turno, usa intent SOLICITUD_TURNO y actionRequired CREATE_PENDING_BOOKING.",
+      "Extrae entities.doctorName (nombre del profesional mencionado o referido por pronombre en el historial) y entities.preferredShift (manana|tarde|indistinto)."
+    ]
+  },
   "clinicContext": {
     "clinicName": "CIMA Salud",
     "doctors": [

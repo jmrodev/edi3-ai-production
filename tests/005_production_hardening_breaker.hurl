@@ -41,7 +41,10 @@ Content-Type: application/json
   "tenantId": "cima-salud",
   "patientId": 100,
   "phone": "+5491122334455",
-  "message": "Hola, necesito un turno con el Dr. Perez para el martes a la tarde"
+  "message": "Hola, necesito un turno con el Dr. Perez para el martes a la tarde",
+  "systemConfig": {
+    "allowedIntents": ["SOLICITUD_TURNO", "CONSULTA_ARANCEL", "CANCELACION_REPROGRAMACION", "INFORMACION_HORARIOS", "OTRO"]
+  }
 }
 HTTP 200
 [Asserts]
